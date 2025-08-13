@@ -4,32 +4,32 @@
       <el-header class="header">
         <div class="header-content">
           <div class="node-info">
-            <h2 :class="{ 'bad-node': attackForm.enabled }">参与者 {{ nodeId }}</h2>
+            <h2 :class="{ 'bad-node': attackForm.enabled }">Participant {{ nodeId }}</h2>
             <el-tag :type="connectionStatus === 'connected' ? 'success' : 'danger'">
-              {{ connectionStatus === 'connected' ? '已连接' : '未连接' }}
+              {{ connectionStatus === 'connected' ? 'Connected' : 'Disconnected' }}
             </el-tag>
-            <el-tag v-if="attackForm.enabled" type="danger" effect="dark">🦹 拜占庭节点</el-tag>
+            <el-tag v-if="attackForm.enabled" type="danger" effect="dark">🦹 Byzantine Node</el-tag>
           </div>
           <div class="session-info">
-            <span>会话: {{ sessionId }}</span>
-            <el-button size="small" @click="leaveSession" type="danger">离开会话</el-button>
+            <span>Session: {{ sessionId }}</span>
+            <el-button size="small" @click="leaveSession" type="danger">Leave Session</el-button>
           </div>
         </div>
       </el-header>
       
       <el-main class="main-content">
         <el-row :gutter="20">
-          <!-- 左侧：共识进度 -->
+          <!-- Left: Consensus Progress -->
           <el-col :span="6">
             <el-card class="progress-card">
               <template #header>
                 <div class="card-header">
-                  <span>共识进度</span>
+                  <span>Consensus Progress</span>
                 </div>
               </template>
               
               <div class="consensus-progress">
-                <!-- 共识进度条 -->
+                <!-- Consensus Progress Bar -->
                 <div class="phase-progress">
                   <el-progress 
                     :percentage="getPhasePercentage()" 
@@ -38,28 +38,28 @@
                   />
                   <div class="phase-steps">
                     <el-steps :active="phaseStep" finish-status="success" simple>
-                      <el-step title="提议" description="发起提议" />
-                      <el-step title="准备" description="验证提议" />
-                      <el-step title="确认" description="确认提议" />
-                      <el-step title="完成" description="达成共识" />
+                      <el-step title="Propose" description="Initiate proposal" />
+                      <el-step title="Prepare" description="Validate proposal" />
+                      <el-step title="Commit" description="Confirm proposal" />
+                      <el-step title="Complete" description="Reach consensus" />
                     </el-steps>
                   </div>
                 </div>
                 
-                <!-- 当前状态 -->
+                <!-- Current Status -->
                 <div class="current-status">
-                  <h4>当前状态</h4>
+                  <h4>Current Status</h4>
                   <el-descriptions :column="1" border size="small">
-                    <el-descriptions-item label="当前阶段">{{ getPhaseDisplayName(currentPhase) }}</el-descriptions-item>
-                    <el-descriptions-item label="接受内容">{{ getAcceptedContentDisplay() }}</el-descriptions-item>
-                    <el-descriptions-item label="网络可靠性">{{ sessionConfig.messageDeliveryRate ?? '未设置' }}%</el-descriptions-item>
+                    <el-descriptions-item label="Current Phase">{{ getPhaseDisplayName(currentPhase) }}</el-descriptions-item>
+                    <el-descriptions-item label="Accepted Content">{{ getAcceptedContentDisplay() }}</el-descriptions-item>
+                    <el-descriptions-item label="Network Reliability">{{ sessionConfig.messageDeliveryRate ?? 'Not Set' }}%</el-descriptions-item>
                   </el-descriptions>
                 </div>
                 
-                <!-- 快速操作 -->
-                <!-- 验证者快速操作 -->
+                <!-- Quick Actions -->
+                <!-- Validator Quick Actions -->
                 <div class="quick-actions" v-if="isMyTurn">
-                  <h4>快速操作</h4>
+                  <h4>Quick Actions</h4>
                   <div class="quick-actions-buttons">
                     <el-button 
                       type="primary" 
@@ -67,7 +67,7 @@
                       :disabled="currentPhase !== 'prepare'"
                       class="quick-action-btn"
                     >
-                      发送准备消息
+                      Send Prepare Message
                     </el-button>
                     <el-button 
                       type="success" 
@@ -75,14 +75,14 @@
                       :disabled="currentPhase !== 'commit'"
                       class="quick-action-btn"
                     >
-                      发送确认消息
+                      Send Commit Message
                     </el-button>
                   </div>
                 </div>
 
-                <!-- 提议者快速操作 -->
+                <!-- Proposer Quick Actions -->
                 <div class="quick-actions" v-if="canProposerSendCustom">
-                  <h4>提议者操作</h4>
+                  <h4>Proposer Actions</h4>
                   <div class="quick-actions-buttons">
                     <el-button 
                       type="success" 
@@ -90,34 +90,34 @@
                       :disabled="currentPhase !== 'commit'"
                       class="quick-action-btn"
                     >
-                      发送确认消息
+                      Send Commit Message
                     </el-button>
                     <div class="proposer-info">
-                      <el-tag type="info" size="small">提议者不发送准备消息，但可发送确认消息</el-tag>
+                      <el-tag type="info" size="small">Proposer doesn't send prepare messages, but can send commit messages</el-tag>
                     </div>
                   </div>
                 </div>
 
 
 
-                <!-- 拜占庭攻击控制区域 -->
+                <!-- Byzantine Attack Control Area -->
                 <div class="attack-control">
                   <el-divider content-position="left">
-                    <span style="color: #f56c6c; font-weight: bold;">🦹 拜占庭攻击控制</span>
+                    <span style="color: #f56c6c; font-weight: bold;">🦹 Byzantine Attack Control</span>
                   </el-divider>
                   
                   <el-form :model="attackForm" label-width="100px" size="small">
-                    <el-form-item label="成为拜占庭节点">
+                    <el-form-item label="Become Byzantine Node">
                       <el-switch 
                         v-model="attackForm.enabled" 
-                        active-text="是"
-                        inactive-text="否"
+                        active-text="Yes"
+                        inactive-text="No"
                         @change="toggleAttackMode"
                       />
-                      <span class="form-tip">选择是否成为拜占庭节点进行攻击</span>
+                      <span class="form-tip">Choose whether to become a Byzantine node for attacks</span>
                     </el-form-item>
 
-                    <el-form-item v-if="attackForm.enabled" label="攻击强度">
+                    <el-form-item v-if="attackForm.enabled" label="Attack Intensity">
                       <el-slider 
                         v-model="attackForm.intensity" 
                         :min="1" 
@@ -128,37 +128,37 @@
                       />
                     </el-form-item>
 
-                    <el-form-item v-if="attackForm.enabled" label="攻击策略">
+                    <el-form-item v-if="attackForm.enabled" label="Attack Strategy">
                       <el-radio-group v-model="attackForm.byzantineStrategy">
-                        <el-radio label="always">总是发送错误值</el-radio>
-                        <el-radio label="sometimes">有时发送错误值</el-radio>
-                        <el-radio label="random">随机发送不同值</el-radio>
-                        <el-radio label="targeted">针对不同节点发送不同值</el-radio>
+                        <el-radio label="always">Always send incorrect values</el-radio>
+                        <el-radio label="sometimes">Sometimes send incorrect values</el-radio>
+                        <el-radio label="random">Randomly send different values</el-radio>
+                        <el-radio label="targeted">Send different values to different nodes</el-radio>
                       </el-radio-group>
                     </el-form-item>
 
-                    <el-form-item v-if="attackForm.enabled && attackForm.byzantineStrategy === 'targeted'" label="目标节点配置">
+                    <el-form-item v-if="attackForm.enabled && attackForm.byzantineStrategy === 'targeted'" label="Target Node Configuration">
                       <div style="margin-bottom: 10px;">
-                        <el-button size="small" @click="addTargetNode">添加目标节点</el-button>
-                        <el-button size="small" @click="clearTargetNodes">清空配置</el-button>
+                        <el-button size="small" @click="addTargetNode">Add Target Node</el-button>
+                        <el-button size="small" @click="clearTargetNodes">Clear Configuration</el-button>
                       </div>
                       <div v-for="(target, index) in attackForm.targetNodes" :key="index" style="margin-bottom: 8px;">
                         <el-row :gutter="10">
                           <el-col :span="8">
-                            <el-select v-model="target.nodeId" placeholder="选择节点" size="small">
+                            <el-select v-model="target.nodeId" placeholder="Select Node" size="small">
                               <el-option 
                                 v-for="nodeId in availableTargetNodes" 
                                 :key="nodeId" 
-                                :label="`节点 ${nodeId}`" 
+                                :label="`Node ${nodeId}`" 
                                 :value="nodeId"
                               />
                             </el-select>
                           </el-col>
                           <el-col :span="8">
-                            <el-select v-model="target.value" placeholder="发送值" size="small">
+                            <el-select v-model="target.value" placeholder="Send Value" size="small">
                               <el-option label="0" :value="0" />
                               <el-option label="1" :value="1" />
-                              <el-option label="随机" :value="null" />
+                              <el-option label="Random" :value="null" />
                             </el-select>
                           </el-col>
                           <el-col :span="4">
@@ -180,17 +180,17 @@
                         :icon="attackForm.enabled ? 'Close' : 'VideoPlay'"
                         style="width: 100%"
                       >
-                        {{ attackForm.enabled ? '停止拜占庭攻击' : '开始拜占庭攻击' }}
+                        {{ attackForm.enabled ? 'Stop Byzantine Attack' : 'Start Byzantine Attack' }}
                       </el-button>
                     </el-form-item>
                   </el-form>
 
-                  <!-- 攻击统计 -->
+                  <!-- Attack Statistics -->
                   <div class="attack-stats" v-if="attackForm.enabled">
-                    <h5 style="color: #f56c6c; margin: 10px 0;">拜占庭攻击效果统计</h5>
+                    <h5 style="color: #f56c6c; margin: 10px 0;">Byzantine Attack Effect Statistics</h5>
                     <el-descriptions :column="2" border size="small">
-                      <el-descriptions-item label="错误消息">{{ attackStats.byzantineMessages }}</el-descriptions-item>
-                      <el-descriptions-item label="目标攻击">{{ attackStats.targetedMessages }}</el-descriptions-item>
+                      <el-descriptions-item label="Incorrect Messages">{{ attackStats.byzantineMessages }}</el-descriptions-item>
+                      <el-descriptions-item label="Targeted Attacks">{{ attackStats.targetedMessages }}</el-descriptions-item>
                     </el-descriptions>
                   </div>
                 </div>
@@ -198,22 +198,22 @@
             </el-card>
           </el-col>
           
-          <!-- 中间：收到的消息 -->
+          <!-- Middle: Received Messages -->
           <el-col :span="6">
             <el-card class="messages-card">
               <template #header>
                 <div class="card-header">
-                  <span>收到的消息</span>
+                  <span>Received Messages</span>
                   <div>
-                    <el-button size="small" @click="exportMessages">导出</el-button>
-                    <el-button size="small" @click="clearMessages">清空</el-button>
+                    <el-button size="small" @click="exportMessages">Export</el-button>
+                    <el-button size="small" @click="clearMessages">Clear</el-button>
                   </div>
                 </div>
               </template>
               
               <div class="messages-container">
                 <div class="messages-header">
-                  <span>消息数量: {{ receivedMessages.length }}</span>
+                  <span>Message Count: {{ receivedMessages.length }}</span>
                 </div>
                 
                 <div class="message-list">
@@ -223,46 +223,46 @@
                     class="message-item-compact"
                   >
                     <div class="message-header-compact">
-                      <span class="message-from">来自: 参与者{{ msg.from }}</span>
+                      <span class="message-from">From: Participant{{ msg.from }}</span>
                       <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
                     </div>
                     <div class="message-content-compact">
                       <span class="message-type">{{ getMessageTypeName(msg.type) }}</span>
                       <span class="message-value" v-if="msg.value !== null">
-                        内容: {{ msg.value === -1 ? '拒绝' : (msg.value === 0 ? '选项A' : '选项B') }}
+                        Content: {{ msg.value === -1 ? 'Reject' : (msg.value === 0 ? 'Option A' : 'Option B') }}
                       </span>
                     </div>
                   </div>
                 </div>
                 
                 <div v-if="receivedMessages.length === 0" class="no-messages">
-                  <el-empty description="暂无消息" :image-size="60" />
+                  <el-empty description="No messages yet" :image-size="60" />
                 </div>
               </div>
             </el-card>
           </el-col>
           
-          <!-- 右侧：拓扑图和共识结果 -->
+          <!-- Right: Topology and Consensus Results -->
           <el-col :span="12">
-            <!-- 拓扑图 -->
+            <!-- Topology -->
             <el-card class="topology-card">
               <template #header>
                 <div class="card-header">
-                  <span>网络拓扑图</span>
-                  <el-button size="small" @click="refreshTopology">刷新</el-button>
+                  <span>Network Topology Map</span>
+                  <el-button size="small" @click="refreshTopology">Refresh</el-button>
                 </div>
               </template>
               
               <div class="dynamic-topology">
                 <div class="topology-info">
-                  <p><strong>网络类型:</strong> {{ getTopologyName(sessionConfig.topology) }}</p>
-                  <p><strong>总人数:</strong> {{ sessionConfig.nodeCount }}</p>
-                  <p><strong>活跃连接:</strong> {{ getActiveConnections() }}</p>
+                  <p><strong>Network Type:</strong> {{ getTopologyName(sessionConfig.topology) }}</p>
+                  <p><strong>Total Participants:</strong> {{ sessionConfig.nodeCount }}</p>
+                  <p><strong>Active Connections:</strong> {{ getActiveConnections() }}</p>
                 </div>
                 
-                <!-- 拓扑图容器 -->
+                <!-- Topology Container -->
                 <div class="topology-container">
-                  <!-- 连接线 -->
+                  <!-- Connection Lines -->
                   <svg class="connection-lines" :width="topologyWidth" :height="topologyHeight">
                     <line 
                       v-for="connection in topologyConnections" 
@@ -275,7 +275,7 @@
                     />
                   </svg>
                   
-                  <!-- 节点 -->
+                  <!-- Nodes -->
                   <div 
                     v-for="i in sessionConfig.nodeCount" 
                     :key="i-1"
@@ -302,7 +302,7 @@
                   </div>
                 </div>
                 
-                <!-- 共识结果 -->
+                <!-- Consensus Results -->
                 <div class="consensus-result-section">
                   <div v-if="consensusResult" class="result-summary">
                     <el-alert
@@ -319,25 +319,25 @@
                         <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.truth }}</div>
-                            <div class="consensus-stat-label">选项A (节点)</div>
+                            <div class="consensus-stat-label">Option A (Nodes)</div>
                           </div>
                         </el-col>
                         <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.falsehood }}</div>
-                            <div class="consensus-stat-label">选项B (节点)</div>
+                            <div class="consensus-stat-label">Option B (Nodes)</div>
                           </div>
                         </el-col>
                         <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.rejected }}</div>
-                            <div class="consensus-stat-label">拒绝 (节点)</div>
+                            <div class="consensus-stat-label">Rejected (Nodes)</div>
                           </div>
                         </el-col>
                         <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.prepare_nodes }}/{{ consensusResult.stats.expected_prepare_nodes || consensusResult.stats.expected_nodes - 1 }}</div>
-                            <div class="consensus-stat-label">准备阶段参与</div>
+                            <div class="consensus-stat-label">Prepare Phase Participants</div>
                           </div>
                         </el-col>
                       </el-row>
@@ -345,20 +345,20 @@
                         <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.commit_nodes }}/{{ consensusResult.stats.expected_nodes }}</div>
-                            <div class="consensus-stat-label">提交阶段参与</div>
+                            <div class="consensus-stat-label">Commit Phase Participants</div>
                           </div>
                         </el-col>
                         <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.total_messages }}</div>
-                            <div class="consensus-stat-label">总消息数</div>
+                            <div class="consensus-stat-label">Total Messages</div>
                           </div>
                         </el-col>
                       </el-row>
                     </div>
                   </div>
                   <div v-else class="consensus-no-result">
-                    <el-empty description="共识尚未完成" :image-size="60" />
+                    <el-empty description="Consensus not yet completed" :image-size="60" />
                   </div>
                 </div>
               </div>
@@ -368,29 +368,29 @@
       </el-main>
     </el-container>
     
-    <!-- 节点详情对话框 -->
-    <el-dialog v-model="nodeDetailsVisible" title="参与者详情" width="500px">
+    <!-- Node Details Dialog -->
+    <el-dialog v-model="nodeDetailsVisible" title="Participant Details" width="500px">
       <div v-if="selectedNode !== null">
         <el-descriptions :column="1" border>
-          <el-descriptions-item label="参与者ID">{{ selectedNode }}</el-descriptions-item>
-          <el-descriptions-item label="连接状态">
+          <el-descriptions-item label="Participant ID">{{ selectedNode }}</el-descriptions-item>
+          <el-descriptions-item label="Connection Status">
             <el-tag :type="connectedNodes.includes(selectedNode) ? 'success' : 'danger'">
-              {{ connectedNodes.includes(selectedNode) ? '已连接' : '未连接' }}
+              {{ connectedNodes.includes(selectedNode) ? 'Connected' : 'Disconnected' }}
             </el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="角色">{{ selectedNode === 0 ? '提议者' : '验证者' }}</el-descriptions-item>
-          <el-descriptions-item label="消息数量">{{ getNodeMessageCount(selectedNode) }}</el-descriptions-item>
+          <el-descriptions-item label="Role">{{ selectedNode === 0 ? 'Proposer' : 'Validator' }}</el-descriptions-item>
+          <el-descriptions-item label="Message Count">{{ getNodeMessageCount(selectedNode) }}</el-descriptions-item>
         </el-descriptions>
         
         <div class="node-messages" style="margin-top: 20px;">
-          <h4>来自此参与者的消息</h4>
+          <h4>Messages from this participant</h4>
           <div v-for="msg in getNodeMessages(selectedNode)" :key="msg.id" class="message-item">
             <div class="message-header">
               <span>{{ getMessageTypeName(msg.type) }}</span>
               <span>{{ formatTime(msg.timestamp) }}</span>
             </div>
             <div class="message-content">
-              内容: {{ msg.value === -1 ? '拒绝' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.proposalContent || '选项A') : (sessionConfig.proposalContent || '选项B')) : '无') }}
+              Content: {{ msg.value === -1 ? 'Reject' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.proposalContent || 'Option A') : (sessionConfig.proposalContent || 'Option B')) : 'None') }}
             </div>
           </div>
         </div>
@@ -408,11 +408,11 @@ import io from 'socket.io-client'
 const route = useRoute()
 const router = useRouter()
 
-// 路由参数
+// Route parameters
 const sessionId = route.params.sessionId
 const nodeId = parseInt(route.params.nodeId)
 
-// 响应式数据
+// Reactive data
 const socket = ref(null)
 const connectionStatus = ref('connecting')
 const sessionConfig = ref({
@@ -434,19 +434,19 @@ const consensusResult = ref(null)
 const nodeDetailsVisible = ref(false)
 const selectedNode = ref(null)
 
-// 拓扑图相关
+// Topology related
 const topologyWidth = ref(500)
 const topologyHeight = ref(400)
 const topologyConnections = ref([])
 
-// 消息发送表单（已移除自定义消息功能）
+// Message sending form (custom message functionality removed)
 const messageForm = reactive({
   type: 'prepare',
   value: 0,
   target: 'all'
 })
 
-// 坏节点攻击控制表单
+// Byzantine node attack control form
 const attackForm = reactive({
   enabled: false,
   intensity: 5,
@@ -454,16 +454,16 @@ const attackForm = reactive({
   targetNodes: []
 })
 
-// 攻击统计
+// Attack statistics
 const attackStats = reactive({
   byzantineMessages: 0,
   targetedMessages: 0
 })
 
-// 可用目标节点列表
+// Available target nodes list
 const availableTargetNodes = ref([])
 
-// 方法
+// Methods
 const connectToServer = () => {
   socket.value = io(window.location.origin, {
     query: {
@@ -474,33 +474,33 @@ const connectToServer = () => {
 
   socket.value.on('connect', () => {
     connectionStatus.value = 'connected'
-    ElMessage.success('连接成功')
+    ElMessage.success('Connected successfully')
   })
 
   socket.value.on('disconnect', () => {
     connectionStatus.value = 'disconnected'
-    ElMessage.warning('连接断开')
+    ElMessage.warning('Connection disconnected')
   })
 
   socket.value.on('session_config', (config) => {
-    console.log('收到会话配置:', config)
-    console.log('提议内容检查:', {
+    console.log('Received session config:', config)
+    console.log('Proposal content check:', {
       proposalContent: config.proposalContent,
       hasProposalContent: config.proposalContent && config.proposalContent.trim(),
       proposalValue: config.proposalValue
     })
     
-    // 合并配置，确保所有字段都存在
+    // Merge configuration, ensure all fields exist
     sessionConfig.value = {
       ...sessionConfig.value,
       ...config
     }
-    console.log('合并后的配置:', sessionConfig.value)
-    console.log('最终proposalContent:', sessionConfig.value.proposalContent)
+    console.log('Merged configuration:', sessionConfig.value)
+    console.log('Final proposalContent:', sessionConfig.value.proposalContent)
     
-    // 设置接受的值为提议值
+    // Set accepted value to proposal value
     acceptedValue.value = config.proposalValue
-    console.log('设置acceptedValue:', acceptedValue.value)
+    console.log('Set acceptedValue:', acceptedValue.value)
     
     updateAvailableTargetNodes()
     refreshTopology()
@@ -534,7 +534,7 @@ const connectToServer = () => {
       timestamp: new Date()
     })
     
-    // 如果是预准备消息，设置接受的值
+    // If it's a pre-prepare message, set the accepted value
     if (message.type === 'pre_prepare' && message.from === 0) {
       acceptedValue.value = message.value
     }
@@ -544,19 +544,19 @@ const connectToServer = () => {
 
   socket.value.on('consensus_result', (result) => {
     consensusResult.value = result
-    ElMessage.success('共识完成！')
+    ElMessage.success('Consensus completed!')
   })
 
   socket.value.on('error', (error) => {
-    ElMessage.error(`错误: ${error.message}`)
+    ElMessage.error(`Error: ${error.message}`)
   })
 }
 
 const leaveSession = async () => {
   try {
-    await ElMessageBox.confirm('确定要离开会话吗？', '确认', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
+    await ElMessageBox.confirm('Are you sure you want to leave the session?', 'Confirm', {
+      confirmButtonText: 'Confirm',
+      cancelButtonText: 'Cancel',
       type: 'warning'
     })
     
@@ -566,7 +566,7 @@ const leaveSession = async () => {
     
     router.push('/')
   } catch {
-    // 用户取消
+    // User cancelled
   }
 }
 
@@ -578,16 +578,16 @@ const sendPrepare = () => {
       value: acceptedValue.value
     }
 
-    // 应用拜占庭攻击策略
+    // Apply Byzantine attack strategy
     if (isBadNode.value && attackForm.enabled) {
       if (attackForm.byzantineStrategy === 'targeted') {
-        // 针对不同节点发送不同消息
+        // Send different messages to different nodes
         const messages = sendTargetedMessages(baseMessage)
         messages.forEach(msg => {
           socket.value.emit('send_prepare', msg)
         })
       } else {
-        // 应用普通攻击策略
+        // Apply normal attack strategy
         const message = applyByzantineAttack(baseMessage, attackForm.intensity / 10)
         socket.value.emit('send_prepare', message)
       }
@@ -605,16 +605,16 @@ const sendCommit = () => {
       value: acceptedValue.value
     }
 
-    // 应用拜占庭攻击策略
+    // Apply Byzantine attack strategy
     if (isBadNode.value && attackForm.enabled) {
       if (attackForm.byzantineStrategy === 'targeted') {
-        // 针对不同节点发送不同消息
+        // Send different messages to different nodes
         const messages = sendTargetedMessages(baseMessage)
         messages.forEach(msg => {
           socket.value.emit('send_commit', msg)
         })
       } else {
-        // 应用普通攻击策略
+        // Apply normal attack strategy
         const message = applyByzantineAttack(baseMessage, attackForm.intensity / 10)
         socket.value.emit('send_commit', message)
       }
@@ -636,20 +636,20 @@ const getPhaseStatus = () => {
 
 const getPhaseDisplayName = (phase) => {
   const names = {
-    'pre-prepare': '提议阶段',
-    'prepare': '准备阶段',
-    'commit': '确认阶段',
-    'reply': '完成阶段'
+    'pre-prepare': 'Propose Phase',
+    'prepare': 'Prepare Phase',
+    'commit': 'Commit Phase',
+    'reply': 'Complete Phase'
   }
   return names[phase] || phase
 }
 
 const getMessageTypeName = (type) => {
   const names = {
-    'pre-prepare': '提议',
-    'prepare': '准备',
-    'commit': '确认',
-    'reply': '回复'
+    'pre-prepare': 'Propose',
+    'prepare': 'Prepare',
+    'commit': 'Commit',
+    'reply': 'Reply'
   }
   return names[type] || type
 }
@@ -658,7 +658,7 @@ const getAcceptedContentDisplay = () => {
   const proposalContent = sessionConfig.value.proposalContent
   const currentAcceptedValue = acceptedValue.value
   
-  console.log('getAcceptedContentDisplay 调用:', {
+  console.log('getAcceptedContentDisplay called:', {
     acceptedValue: currentAcceptedValue,
     proposalContent: proposalContent,
     proposalContentType: typeof proposalContent,
@@ -667,21 +667,21 @@ const getAcceptedContentDisplay = () => {
     sessionConfig: sessionConfig.value
   })
   
-  // 如果有提议内容，优先显示提议内容
+  // If there's proposal content, prioritize displaying it
   if (proposalContent && proposalContent.trim()) {
-    console.log('显示提议内容:', proposalContent)
+    console.log('Display proposal content:', proposalContent)
     return proposalContent
   }
   
-  // 如果acceptedValue为null，显示未决定
+  // If acceptedValue is null, display undecided
   if (currentAcceptedValue === null) {
-    console.log('显示未决定')
-    return '未决定'
+    console.log('Display undecided')
+    return 'Undecided'
   }
   
-  // 否则显示默认的选项A/B
-  const result = currentAcceptedValue === 0 ? '选项A' : '选项B'
-  console.log('显示默认选项:', result)
+  // Otherwise display default Option A/B
+  const result = currentAcceptedValue === 0 ? 'Option A' : 'Option B'
+  console.log('Display default option:', result)
   return result
 }
 
@@ -691,10 +691,10 @@ const formatTime = (timestamp) => {
 
 const exportMessages = () => {
   const data = receivedMessages.value.map(msg => ({
-    时间: formatTime(msg.timestamp),
-    来源: `参与者${msg.from}`,
-    类型: getMessageTypeName(msg.type),
-    内容: msg.value === -1 ? '拒绝' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.value.proposalContent || '选项A') : (sessionConfig.value.proposalContent || '选项B')) : '无')
+    Time: formatTime(msg.timestamp),
+    Source: `Participant${msg.from}`,
+    Type: getMessageTypeName(msg.type),
+    Content: msg.value === -1 ? 'Reject' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.value.proposalContent || 'Option A') : (sessionConfig.value.proposalContent || 'Option B')) : 'None')
   }))
   
   const csv = [
@@ -710,22 +710,22 @@ const exportMessages = () => {
   a.click()
   window.URL.revokeObjectURL(url)
   
-  ElMessage.success('消息已导出')
+  ElMessage.success('Messages exported')
 }
 
 const clearMessages = () => {
   receivedMessages.value = []
-  ElMessage.success('消息已清空')
+  ElMessage.success('Messages cleared')
 }
 
 const refreshTopology = () => {
   topologyConnections.value = []
   
-  // 根据拓扑结构生成连接
+  // Generate connections based on topology
   if (sessionConfig.value.topology === 'full') {
     for (let i = 0; i < sessionConfig.value.nodeCount; i++) {
       for (let j = i + 1; j < sessionConfig.value.nodeCount; j++) {
-        // 计算节点中心位置
+        // Calculate node center position
         const nodeSize = 40
         const x1 = getNodeX(i) + nodeSize / 2
         const y1 = getNodeY(i) + nodeSize / 2
@@ -748,13 +748,13 @@ const refreshTopology = () => {
 
 const getNodeX = (nodeId) => {
   const containerWidth = topologyWidth.value
-  const radius = Math.min(containerWidth, topologyHeight.value) / 2.2  // 增大半径，让节点更靠近边缘
-  const nodeSize = 40  // 节点尺寸
+  const radius = Math.min(containerWidth, topologyHeight.value) / 2.2  // Increase radius to bring nodes closer to edge
+  const nodeSize = 40  // Node size
   
   if (sessionConfig.value.topology === 'full' || sessionConfig.value.topology === 'ring') {
     const angle = (2 * Math.PI * nodeId) / sessionConfig.value.nodeCount
     const centerX = containerWidth / 2 + radius * Math.cos(angle)
-    // 调整位置，使节点中心对齐
+    // Adjust position to center-align nodes
     return centerX - nodeSize / 2
   }
   
@@ -763,13 +763,13 @@ const getNodeX = (nodeId) => {
 
 const getNodeY = (nodeId) => {
   const containerHeight = topologyHeight.value
-  const radius = Math.min(topologyWidth.value, containerHeight) / 2.2  // 增大半径，让节点更靠近边缘
-  const nodeSize = 40  // 节点尺寸
+  const radius = Math.min(topologyWidth.value, containerHeight) / 2.2  // Increase radius to bring nodes closer to edge
+  const nodeSize = 40  // Node size
   
   if (sessionConfig.value.topology === 'full' || sessionConfig.value.topology === 'ring') {
     const angle = (2 * Math.PI * nodeId) / sessionConfig.value.nodeCount
     const centerY = containerHeight / 2 + radius * Math.sin(angle)
-    // 调整位置，使节点中心对齐
+    // Adjust position to center-align nodes
     return centerY - nodeSize / 2
   }
   
@@ -803,10 +803,10 @@ const showNodeDetails = (nodeId) => {
 
 const getTopologyName = (topology) => {
   const names = {
-    full: '全连接',
-    ring: '环形',
-    star: '星形',
-    tree: '树形'
+    full: 'Full Connected',
+    ring: 'Ring',
+    star: 'Star',
+    tree: 'Tree'
   }
   return names[topology] || topology
 }
@@ -816,32 +816,32 @@ const getActiveConnections = () => {
 }
 
 const getConsensusAlertType = (status) => {
-  if (status.includes('成功')) return 'success'
-  if (status.includes('失败')) return 'error'
+  if (status.includes('Success')) return 'success'
+  if (status.includes('Failed')) return 'error'
   return 'info'
 }
 
 const isMyTurn = computed(() => {
-  // 提议者（节点0）不发送准备消息，但可以发送提交消息
+  // Proposer (node 0) doesn't send prepare messages, but can send commit messages
   if (nodeId === 0) {
-    return currentPhase.value === 'commit'  // 提议者可以发送提交消息
+    return currentPhase.value === 'commit'  // Proposer can send commit messages
   }
   return currentPhase.value === 'prepare' || currentPhase.value === 'commit'
 })
 
-// 提议者是否可以发送消息
+// Whether proposer can send messages
 const canProposerSendCustom = computed(() => {
   return nodeId === 0
 })
 
-// 判断是否为拜占庭节点（基于用户选择）
+// Determine if it's a Byzantine node (based on user choice)
 const isBadNode = computed(() => {
   return attackForm.enabled
 })
 
-// 消息发送相关方法（已移除自定义消息功能）
+// Message sending related methods (custom message functionality removed)
 
-// 应用拜占庭攻击策略
+// Apply Byzantine attack strategy
 const applyByzantineAttack = (message, intensity) => {
   if (!attackForm.enabled || Math.random() > intensity) return message
 
@@ -863,7 +863,7 @@ const applyByzantineAttack = (message, intensity) => {
       attackValue = Math.random() > 0.5 ? 1 : 0
       break
     case 'targeted':
-      // 针对不同节点发送不同值的逻辑在发送时处理
+      // Logic for sending different values to different nodes is handled during sending
       return message
   }
 
@@ -871,13 +871,13 @@ const applyByzantineAttack = (message, intensity) => {
     message.value = attackValue
     message.byzantine = true
     attackStats.byzantineMessages++
-    console.log(`🦹 坏节点 ${nodeId} 拜占庭攻击: 发送错误值 ${message.value}`)
+    console.log(`🦹 Byzantine node ${nodeId} attack: sending incorrect value ${message.value}`)
   }
 
   return message
 }
 
-// 发送针对特定节点的不同消息
+// Send different messages to specific nodes
 const sendTargetedMessages = (baseMessage) => {
   if (!attackForm.enabled || attackForm.byzantineStrategy !== 'targeted') {
     return [baseMessage]
@@ -887,7 +887,7 @@ const sendTargetedMessages = (baseMessage) => {
   const targetConfigs = attackForm.targetNodes.filter(target => target.nodeId !== null)
 
   if (targetConfigs.length === 0) {
-    // 如果没有配置目标节点，使用默认攻击
+    // If no target nodes configured, use default attack
     const attackMessage = { ...baseMessage }
     attackMessage.value = baseMessage.value === 0 ? 1 : 0
     attackMessage.byzantine = true
@@ -896,13 +896,13 @@ const sendTargetedMessages = (baseMessage) => {
     return messages
   }
 
-  // 为每个目标节点创建不同的消息
+  // Create different messages for each target node
   targetConfigs.forEach(target => {
     const targetMessage = { ...baseMessage }
     if (target.value !== null) {
       targetMessage.value = target.value
     } else {
-      // 随机值
+      // Random value
       targetMessage.value = Math.random() > 0.5 ? 1 : 0
     }
     targetMessage.byzantine = true
@@ -911,7 +911,7 @@ const sendTargetedMessages = (baseMessage) => {
     messages.push(targetMessage)
   })
 
-  // 为未配置的节点发送原始消息
+  // Send original message to unconfigured nodes
   const configuredNodes = targetConfigs.map(t => t.nodeId)
   const allNodes = Array.from({ length: sessionConfig.value.nodeCount }, (_, i) => i)
   const unconfiguredNodes = allNodes.filter(n => 
@@ -923,20 +923,20 @@ const sendTargetedMessages = (baseMessage) => {
     messages.push(originalMessage)
   }
 
-  console.log(`🦹 坏节点 ${nodeId} 发送针对不同节点的消息:`, messages)
+  console.log(`🦹 Byzantine node ${nodeId} sending targeted messages:`, messages)
   return messages
 }
 
-// 切换攻击模式
+// Toggle attack mode
 const toggleAttackMode = () => {
   if (attackForm.enabled) {
-    ElMessage.warning(`🦹 参与者 ${nodeId} 已选择成为拜占庭节点`)
+    ElMessage.warning(`🦹 Participant ${nodeId} has chosen to become a Byzantine node`)
   } else {
-    ElMessage.info(`🦹 参与者 ${nodeId} 已停止拜占庭攻击`)
+    ElMessage.info(`🦹 Participant ${nodeId} has stopped Byzantine attacks`)
   }
 }
 
-// 添加目标节点
+// Add target node
 const addTargetNode = () => {
   attackForm.targetNodes.push({
     nodeId: null,
@@ -944,22 +944,22 @@ const addTargetNode = () => {
   })
 }
 
-// 移除目标节点
+// Remove target node
 const removeTargetNode = (index) => {
   attackForm.targetNodes.splice(index, 1)
 }
 
-// 清空目标节点配置
+// Clear target node configuration
 const clearTargetNodes = () => {
   attackForm.targetNodes = []
 }
 
-// 更新可用目标节点列表
+// Update available target nodes list
 const updateAvailableTargetNodes = () => {
   availableTargetNodes.value = Array.from({ length: sessionConfig.value.nodeCount }, (_, i) => i)
 }
 
-// 生命周期
+// Lifecycle
 onMounted(() => {
   connectToServer()
   updateAvailableTargetNodes()
@@ -1071,7 +1071,7 @@ onUnmounted(() => {
   text-align: center;
 }
 
-/* 拜占庭节点标识 */
+/* Byzantine node identifier */
 .node-info h2.bad-node {
   color: #f56c6c;
   position: relative;
@@ -1085,7 +1085,7 @@ onUnmounted(() => {
   font-size: 16px;
 }
 
-/* 消息发送表单 */
+/* Message sending form */
 .message-form {
   margin-top: 20px;
   padding-top: 20px;
@@ -1103,7 +1103,7 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-/* 攻击控制区域样式 */
+/* Attack control area styles */
 .attack-control {
   margin-top: 20px;
   padding: 15px;
