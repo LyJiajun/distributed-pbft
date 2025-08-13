@@ -51,12 +51,13 @@
                   <h4>当前状态</h4>
                   <el-descriptions :column="1" border size="small">
                     <el-descriptions-item label="当前阶段">{{ getPhaseDisplayName(currentPhase) }}</el-descriptions-item>
-                    <el-descriptions-item label="接受内容">{{ acceptedValue !== null ? (acceptedValue === 0 ? '选项A' : '选项B') : '未决定' }}</el-descriptions-item>
-                    <el-descriptions-item label="连接人数">{{ connectedNodes.length }}/{{ sessionConfig.nodeCount }}</el-descriptions-item>
+                    <el-descriptions-item label="接受内容">{{ getAcceptedContentDisplay() }}</el-descriptions-item>
+                    <el-descriptions-item label="网络可靠性">{{ sessionConfig.messageDeliveryRate ?? '未设置' }}%</el-descriptions-item>
                   </el-descriptions>
                 </div>
                 
                 <!-- 快速操作 -->
+                <!-- 验证者快速操作 -->
                 <div class="quick-actions" v-if="isMyTurn">
                   <h4>快速操作</h4>
                   <div class="quick-actions-buttons">
@@ -79,59 +80,25 @@
                   </div>
                 </div>
 
-                <!-- 消息发送表单 -->
-                <div class="message-form">
-                  <h4>发送消息</h4>
-                  <el-form :model="messageForm" label-width="80px">
-                    <el-form-item label="消息类型">
-                      <el-select v-model="messageForm.type" placeholder="选择消息类型">
-                        <el-option label="准备消息" value="prepare" />
-                        <el-option label="提交消息" value="commit" />
-                        <el-option label="自定义消息" value="custom" />
-                      </el-select>
-                    </el-form-item>
-                    
-                    <el-form-item label="消息值">
-                      <el-select v-model="messageForm.value" placeholder="选择值">
-                        <el-option label="接受 0" :value="0" />
-                        <el-option label="接受 1" :value="1" />
-                        <el-option label="拒绝提议" :value="-1" />
-                      </el-select>
-                    </el-form-item>
-                    
-                    <el-form-item label="目标节点">
-                      <el-select v-model="messageForm.target" placeholder="选择目标节点">
-                        <el-option label="所有节点" value="all" />
-                        <el-option 
-                          v-for="node in availableTargetNodes" 
-                          :key="node" 
-                          :label="`节点 ${node}`" 
-                          :value="node" 
-                        />
-                      </el-select>
-                    </el-form-item>
-                    
-                    <el-form-item v-if="messageForm.type === 'custom'" label="自定义内容">
-                      <el-input 
-                        v-model="messageForm.customContent" 
-                        type="textarea" 
-                        :rows="3"
-                        placeholder="输入自定义消息内容"
-                      />
-                    </el-form-item>
-                    
-                    <el-form-item>
-                      <el-button 
-                        type="primary" 
-                        @click="sendCustomMessage" 
-                        :disabled="!canSendMessage()"
-                        style="width: 100%"
-                      >
-                        发送消息
-                      </el-button>
-                    </el-form-item>
-                  </el-form>
+                <!-- 提议者快速操作 -->
+                <div class="quick-actions" v-if="canProposerSendCustom">
+                  <h4>提议者操作</h4>
+                  <div class="quick-actions-buttons">
+                    <el-button 
+                      type="success" 
+                      @click="sendCommit" 
+                      :disabled="currentPhase !== 'commit'"
+                      class="quick-action-btn"
+                    >
+                      发送确认消息
+                    </el-button>
+                    <div class="proposer-info">
+                      <el-tag type="info" size="small">提议者不发送准备消息，但可发送确认消息</el-tag>
+                    </div>
+                  </div>
                 </div>
+
+
 
                 <!-- 拜占庭攻击控制区域 -->
                 <div class="attack-control">
@@ -349,22 +316,42 @@
                     
                     <div class="consensus-stats">
                       <el-row :gutter="20">
-                        <el-col :span="8">
+                        <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.truth }}</div>
-                            <div class="consensus-stat-label">选择A</div>
+                            <div class="consensus-stat-label">选项A (节点)</div>
                           </div>
                         </el-col>
-                        <el-col :span="8">
+                        <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.falsehood }}</div>
-                            <div class="consensus-stat-label">选择B</div>
+                            <div class="consensus-stat-label">选项B (节点)</div>
                           </div>
                         </el-col>
-                        <el-col :span="8">
+                        <el-col :span="6">
                           <div class="consensus-stat-item">
                             <div class="consensus-stat-number">{{ consensusResult.stats.rejected }}</div>
-                            <div class="consensus-stat-label">拒绝</div>
+                            <div class="consensus-stat-label">拒绝 (节点)</div>
+                          </div>
+                        </el-col>
+                        <el-col :span="6">
+                          <div class="consensus-stat-item">
+                            <div class="consensus-stat-number">{{ consensusResult.stats.prepare_nodes }}/{{ consensusResult.stats.expected_prepare_nodes || consensusResult.stats.expected_nodes - 1 }}</div>
+                            <div class="consensus-stat-label">准备阶段参与</div>
+                          </div>
+                        </el-col>
+                      </el-row>
+                      <el-row :gutter="20" style="margin-top: 10px;">
+                        <el-col :span="6">
+                          <div class="consensus-stat-item">
+                            <div class="consensus-stat-number">{{ consensusResult.stats.commit_nodes }}/{{ consensusResult.stats.expected_nodes }}</div>
+                            <div class="consensus-stat-label">提交阶段参与</div>
+                          </div>
+                        </el-col>
+                        <el-col :span="6">
+                          <div class="consensus-stat-item">
+                            <div class="consensus-stat-number">{{ consensusResult.stats.total_messages }}</div>
+                            <div class="consensus-stat-label">总消息数</div>
                           </div>
                         </el-col>
                       </el-row>
@@ -403,7 +390,7 @@
               <span>{{ formatTime(msg.timestamp) }}</span>
             </div>
             <div class="message-content">
-              内容: {{ msg.value === -1 ? '拒绝' : (msg.value !== null ? (msg.value === 0 ? '选项A' : '选项B') : '无') }}
+              内容: {{ msg.value === -1 ? '拒绝' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.proposalContent || '选项A') : (sessionConfig.proposalContent || '选项B')) : '无') }}
             </div>
           </div>
         </div>
@@ -432,9 +419,11 @@ const sessionConfig = ref({
   nodeCount: 5,
   topology: 'full',
   proposalValue: 0,
+  proposalContent: '',
   faultyNodes: 1,
   maliciousProposer: false,
-  allowTampering: false
+  allowTampering: false,
+  messageDeliveryRate: 100
 })
 const connectedNodes = ref([])
 const currentPhase = ref('pre-prepare')
@@ -446,16 +435,15 @@ const nodeDetailsVisible = ref(false)
 const selectedNode = ref(null)
 
 // 拓扑图相关
-const topologyWidth = ref(400)
-const topologyHeight = ref(300)
+const topologyWidth = ref(500)
+const topologyHeight = ref(400)
 const topologyConnections = ref([])
 
-// 消息发送表单
+// 消息发送表单（已移除自定义消息功能）
 const messageForm = reactive({
   type: 'prepare',
   value: 0,
-  target: 'all',
-  customContent: ''
+  target: 'all'
 })
 
 // 坏节点攻击控制表单
@@ -495,7 +483,25 @@ const connectToServer = () => {
   })
 
   socket.value.on('session_config', (config) => {
-    sessionConfig.value = config
+    console.log('收到会话配置:', config)
+    console.log('提议内容检查:', {
+      proposalContent: config.proposalContent,
+      hasProposalContent: config.proposalContent && config.proposalContent.trim(),
+      proposalValue: config.proposalValue
+    })
+    
+    // 合并配置，确保所有字段都存在
+    sessionConfig.value = {
+      ...sessionConfig.value,
+      ...config
+    }
+    console.log('合并后的配置:', sessionConfig.value)
+    console.log('最终proposalContent:', sessionConfig.value.proposalContent)
+    
+    // 设置接受的值为提议值
+    acceptedValue.value = config.proposalValue
+    console.log('设置acceptedValue:', acceptedValue.value)
+    
     updateAvailableTargetNodes()
     refreshTopology()
   })
@@ -527,6 +533,12 @@ const connectToServer = () => {
       id: Date.now() + Math.random(),
       timestamp: new Date()
     })
+    
+    // 如果是预准备消息，设置接受的值
+    if (message.type === 'pre_prepare' && message.from === 0) {
+      acceptedValue.value = message.value
+    }
+    
     refreshTopology()
   })
 
@@ -642,6 +654,37 @@ const getMessageTypeName = (type) => {
   return names[type] || type
 }
 
+const getAcceptedContentDisplay = () => {
+  const proposalContent = sessionConfig.value.proposalContent
+  const currentAcceptedValue = acceptedValue.value
+  
+  console.log('getAcceptedContentDisplay 调用:', {
+    acceptedValue: currentAcceptedValue,
+    proposalContent: proposalContent,
+    proposalContentType: typeof proposalContent,
+    proposalContentLength: proposalContent ? proposalContent.length : 0,
+    hasProposalContent: proposalContent && proposalContent.trim(),
+    sessionConfig: sessionConfig.value
+  })
+  
+  // 如果有提议内容，优先显示提议内容
+  if (proposalContent && proposalContent.trim()) {
+    console.log('显示提议内容:', proposalContent)
+    return proposalContent
+  }
+  
+  // 如果acceptedValue为null，显示未决定
+  if (currentAcceptedValue === null) {
+    console.log('显示未决定')
+    return '未决定'
+  }
+  
+  // 否则显示默认的选项A/B
+  const result = currentAcceptedValue === 0 ? '选项A' : '选项B'
+  console.log('显示默认选项:', result)
+  return result
+}
+
 const formatTime = (timestamp) => {
   return new Date(timestamp).toLocaleTimeString()
 }
@@ -651,7 +694,7 @@ const exportMessages = () => {
     时间: formatTime(msg.timestamp),
     来源: `参与者${msg.from}`,
     类型: getMessageTypeName(msg.type),
-    内容: msg.value === -1 ? '拒绝' : (msg.value !== null ? (msg.value === 0 ? '选项A' : '选项B') : '无')
+    内容: msg.value === -1 ? '拒绝' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.value.proposalContent || '选项A') : (sessionConfig.value.proposalContent || '选项B')) : '无')
   }))
   
   const csv = [
@@ -682,13 +725,20 @@ const refreshTopology = () => {
   if (sessionConfig.value.topology === 'full') {
     for (let i = 0; i < sessionConfig.value.nodeCount; i++) {
       for (let j = i + 1; j < sessionConfig.value.nodeCount; j++) {
+        // 计算节点中心位置
+        const nodeSize = 40
+        const x1 = getNodeX(i) + nodeSize / 2
+        const y1 = getNodeY(i) + nodeSize / 2
+        const x2 = getNodeX(j) + nodeSize / 2
+        const y2 = getNodeY(j) + nodeSize / 2
+        
         topologyConnections.value.push({
           from: i,
           to: j,
-          x1: getNodeX(i),
-          y1: getNodeY(i),
-          x2: getNodeX(j),
-          y2: getNodeY(j),
+          x1: x1,
+          y1: y1,
+          x2: x2,
+          y2: y2,
           active: connectedNodes.value.includes(i) && connectedNodes.value.includes(j)
         })
       }
@@ -698,26 +748,32 @@ const refreshTopology = () => {
 
 const getNodeX = (nodeId) => {
   const containerWidth = topologyWidth.value
-  const radius = Math.min(containerWidth, topologyHeight.value) / 3
+  const radius = Math.min(containerWidth, topologyHeight.value) / 2.2  // 增大半径，让节点更靠近边缘
+  const nodeSize = 40  // 节点尺寸
   
   if (sessionConfig.value.topology === 'full' || sessionConfig.value.topology === 'ring') {
     const angle = (2 * Math.PI * nodeId) / sessionConfig.value.nodeCount
-    return containerWidth / 2 + radius * Math.cos(angle)
+    const centerX = containerWidth / 2 + radius * Math.cos(angle)
+    // 调整位置，使节点中心对齐
+    return centerX - nodeSize / 2
   }
   
-  return (containerWidth / (sessionConfig.value.nodeCount + 1)) * (nodeId + 1)
+  return (containerWidth / (sessionConfig.value.nodeCount + 1)) * (nodeId + 1) - nodeSize / 2
 }
 
 const getNodeY = (nodeId) => {
   const containerHeight = topologyHeight.value
-  const radius = Math.min(topologyWidth.value, containerHeight) / 3
+  const radius = Math.min(topologyWidth.value, containerHeight) / 2.2  // 增大半径，让节点更靠近边缘
+  const nodeSize = 40  // 节点尺寸
   
   if (sessionConfig.value.topology === 'full' || sessionConfig.value.topology === 'ring') {
     const angle = (2 * Math.PI * nodeId) / sessionConfig.value.nodeCount
-    return containerHeight / 2 + radius * Math.sin(angle)
+    const centerY = containerHeight / 2 + radius * Math.sin(angle)
+    // 调整位置，使节点中心对齐
+    return centerY - nodeSize / 2
   }
   
-  return containerHeight / 2
+  return containerHeight / 2 - nodeSize / 2
 }
 
 const isNodeVisible = (nodeId) => {
@@ -766,7 +822,16 @@ const getConsensusAlertType = (status) => {
 }
 
 const isMyTurn = computed(() => {
+  // 提议者（节点0）不发送准备消息，但可以发送提交消息
+  if (nodeId === 0) {
+    return currentPhase.value === 'commit'  // 提议者可以发送提交消息
+  }
   return currentPhase.value === 'prepare' || currentPhase.value === 'commit'
+})
+
+// 提议者是否可以发送消息
+const canProposerSendCustom = computed(() => {
+  return nodeId === 0
 })
 
 // 判断是否为拜占庭节点（基于用户选择）
@@ -774,43 +839,7 @@ const isBadNode = computed(() => {
   return attackForm.enabled
 })
 
-// 消息发送相关方法
-const sendCustomMessage = () => {
-  if (socket.value) {
-    const baseMessage = {
-      sessionId,
-      nodeId,
-      type: messageForm.type,
-      value: messageForm.value,
-      target: messageForm.target,
-      customContent: messageForm.customContent
-    }
-
-    // 应用拜占庭攻击策略
-    if (isBadNode.value && attackForm.enabled) {
-      if (attackForm.byzantineStrategy === 'targeted') {
-        // 针对不同节点发送不同消息
-        const messages = sendTargetedMessages(baseMessage)
-        messages.forEach(msg => {
-          socket.value.emit('send_message', msg)
-        })
-      } else {
-        // 应用普通攻击策略
-        const message = applyByzantineAttack(baseMessage, attackForm.intensity / 10)
-        socket.value.emit('send_message', message)
-      }
-    } else {
-      socket.value.emit('send_message', baseMessage)
-    }
-    
-    messageForm.customContent = '' // 清空自定义内容
-    ElMessage.success('消息发送成功')
-  }
-}
-
-const canSendMessage = () => {
-  return messageForm.type !== 'custom' || messageForm.customContent.trim() !== ''
-}
+// 消息发送相关方法（已移除自定义消息功能）
 
 // 应用拜占庭攻击策略
 const applyByzantineAttack = (message, intensity) => {
@@ -1037,6 +1066,11 @@ onUnmounted(() => {
   width: 100%;
 }
 
+.proposer-info {
+  margin-top: 10px;
+  text-align: center;
+}
+
 /* 拜占庭节点标识 */
 .node-info h2.bad-node {
   color: #f56c6c;
@@ -1213,7 +1247,7 @@ onUnmounted(() => {
 .topology-container {
   position: relative;
   width: 100%;
-  height: 300px;
+  height: 400px;
   background: #f8f9fa;
   border-radius: 10px;
   margin-bottom: 20px;

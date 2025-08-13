@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>提议内容测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .test-case {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .result {
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <h1>提议内容显示测试</h1>
+    
+    <div class="test-case">
+        <h3>测试用例1: 有提议内容</h3>
+        <p>输入: proposalContent = "今天中午吃火锅", acceptedValue = 0</p>
+        <p class="result">预期输出: "今天中午吃火锅"</p>
+    </div>
+    
+    <div class="test-case">
+        <h3>测试用例2: 无提议内容，有acceptedValue</h3>
+        <p>输入: proposalContent = "", acceptedValue = 0</p>
+        <p class="result">预期输出: "选项A"</p>
+    </div>
+    
+    <div class="test-case">
+        <h3>测试用例3: 无提议内容，acceptedValue为null</h3>
+        <p>输入: proposalContent = "", acceptedValue = null</p>
+        <p class="result">预期输出: "未决定"</p>
+    </div>
+    
+    <div class="test-case">
+        <h3>测试用例4: 提议内容为空字符串</h3>
+        <p>输入: proposalContent = "   ", acceptedValue = 1</p>
+        <p class="result">预期输出: "选项B"</p>
+    </div>
+    
+    <script>
+        // 模拟getAcceptedContentDisplay函数
+        function getAcceptedContentDisplay(acceptedValue, proposalContent) {
+            console.log('getAcceptedContentDisplay 调用:', {
+                acceptedValue: acceptedValue,
+                proposalContent: proposalContent
+            });
+            
+            // 如果有提议内容，优先显示提议内容
+            if (proposalContent && proposalContent.trim()) {
+                return proposalContent;
+            }
+            
+            // 如果acceptedValue为null，显示未决定
+            if (acceptedValue === null) {
+                return '未决定';
+            }
+            
+            // 否则显示默认的选项A/B
+            return acceptedValue === 0 ? '选项A' : '选项B';
+        }
+        
+        // 测试用例
+        console.log('=== 测试用例1 ===');
+        console.log('结果:', getAcceptedContentDisplay(0, "今天中午吃火锅"));
+        
+        console.log('=== 测试用例2 ===');
+        console.log('结果:', getAcceptedContentDisplay(0, ""));
+        
+        console.log('=== 测试用例3 ===');
+        console.log('结果:', getAcceptedContentDisplay(null, ""));
+        
+        console.log('=== 测试用例4 ===');
+        console.log('结果:', getAcceptedContentDisplay(1, "   "));
+    </script>
+</body>
+</html>

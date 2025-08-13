@@ -69,6 +69,16 @@
                   </el-radio-group>
                 </el-form-item>
                 
+                <el-form-item label="提议内容" prop="proposalContent">
+                  <el-input 
+                    v-model="formData.proposalContent" 
+                    type="textarea" 
+                    :rows="3"
+                    placeholder="请输入提议的具体内容，例如：'今天中午吃火锅'、'选择方案A'等"
+                  />
+                  <span class="form-tip">输入具体的提议内容，将在节点页面显示</span>
+                </el-form-item>
+                
                 <el-form-item label="恶意提议者" prop="maliciousProposer">
                   <el-switch v-model="formData.maliciousProposer" />
                   <span class="form-tip">开启后提议者可能发送错误值</span>
@@ -77,6 +87,19 @@
                 <el-form-item label="允许消息篡改" prop="allowTampering">
                   <el-switch v-model="formData.allowTampering" />
                   <span class="form-tip">开启后故障节点可能篡改消息</span>
+                </el-form-item>
+                
+                <el-form-item label="消息传达概率" prop="messageDeliveryRate">
+                  <el-slider 
+                    v-model="formData.messageDeliveryRate" 
+                    :min="50" 
+                    :max="100" 
+                    :step="5"
+                    show-stops
+                    show-input
+                    :format-tooltip="(val) => `${val}%`"
+                  />
+                  <span class="form-tip">模拟网络丢包，测试网络可靠性对共识的影响</span>
                 </el-form-item>
                 
                 <el-form-item>
@@ -105,6 +128,8 @@
                   <el-descriptions-item label="容错节点数">{{ sessionInfo.config.faultyNodes }}</el-descriptions-item>
                   <el-descriptions-item label="拓扑结构">{{ getTopologyName(sessionInfo.config.topology) }}</el-descriptions-item>
                   <el-descriptions-item label="提议值">{{ sessionInfo.config.proposalValue }}</el-descriptions-item>
+                  <el-descriptions-item label="提议内容">{{ sessionInfo.config.proposalContent || '无' }}</el-descriptions-item>
+                  <el-descriptions-item label="消息传达概率">{{ sessionInfo.config.messageDeliveryRate }}%</el-descriptions-item>
                   <el-descriptions-item label="状态">{{ sessionInfo.status }}</el-descriptions-item>
                 </el-descriptions>
                 
@@ -172,8 +197,10 @@ export default {
       topology: 'full',
       branchCount: 2,
       proposalValue: 0,
+      proposalContent: '',
       maliciousProposer: false,
-      allowTampering: false
+      allowTampering: false,
+      messageDeliveryRate: 100
     })
     
     const rules = {
@@ -222,8 +249,10 @@ export default {
           topology: formData.topology,
           branchCount: formData.branchCount,
           proposalValue: formData.proposalValue,
+          proposalContent: formData.proposalContent,
           maliciousProposer: formData.maliciousProposer,
-          allowTampering: formData.allowTampering
+          allowTampering: formData.allowTampering,
+          messageDeliveryRate: formData.messageDeliveryRate
         })
         
         sessionInfo.value = response.data

@@ -37,8 +37,10 @@ class SessionConfig(BaseModel):
     topology: str
     branchCount: Optional[int] = 2
     proposalValue: int
+    proposalContent: Optional[str] = ""
     maliciousProposer: bool
     allowTampering: bool
+    messageDeliveryRate: int = 100
 
 class SessionInfo(BaseModel):
     sessionId: str
@@ -57,6 +59,13 @@ node_sockets: Dict[str, Dict[int, str]] = {}
 # 会话管理
 def create_session(config: SessionConfig) -> SessionInfo:
     session_id = str(uuid.uuid4())
+    
+    print(f"创建会话 - 原始配置:", config.dict())
+    print(f"提议内容检查 - 创建时:", {
+        'proposalContent': config.proposalContent,
+        'hasProposalContent': config.proposalContent and config.proposalContent.strip(),
+        'proposalValue': config.proposalValue
+    })
     
     session = {
         "config": config.dict(),
@@ -86,8 +95,10 @@ def create_session(config: SessionConfig) -> SessionInfo:
             "topology": config.topology,
             "branchCount": config.branchCount,
             "proposalValue": config.proposalValue,
+            "proposalContent": config.proposalContent,
             "maliciousProposer": config.maliciousProposer,
-            "allowTampering": config.allowTampering
+            "allowTampering": config.allowTampering,
+            "messageDeliveryRate": config.messageDeliveryRate
         },
         "status": "waiting",
         "createdAt": session["created_at"]
@@ -123,6 +134,19 @@ def is_honest(node_id: int, n: int, m: int, faulty_proposer: bool) -> bool:
         if node_id == 0:
             return True
         return node_id < n - m
+
+def should_deliver_message(session_id: str) -> bool:
+    """根据消息传达概率决定是否发送消息"""
+    session = get_session(session_id)
+    if not session:
+        return True
+    
+    delivery_rate = session["config"].get("messageDeliveryRate", 100)
+    if delivery_rate >= 100:
+        return True
+    
+    # 生成随机数，如果小于传达概率则发送消息
+    return random.random() * 100 < delivery_rate
 
 # HTTP路由
 @app.post("/api/sessions")
@@ -226,7 +250,14 @@ async def connect(sid, environ, auth):
             connected_nodes[session_id].append(node_id)
         
         # 发送会话配置
-        await sio.emit('session_config', sessions[session_id]["config"], room=sid)
+        config = sessions[session_id]["config"]
+        print(f"发送会话配置给节点 {node_id}:", config)
+        print(f"提议内容检查 - 后端:", {
+            'proposalContent': config.get('proposalContent'),
+            'hasProposalContent': config.get('proposalContent') and config.get('proposalContent').strip(),
+            'proposalValue': config.get('proposalValue')
+        })
+        await sio.emit('session_config', config, room=sid)
         
         # 发送当前阶段信息
         await sio.emit('phase_update', {
@@ -288,8 +319,12 @@ async def send_prepare(sid, data):
     
     session["messages"]["prepare"].append(message)
     
-    # 广播给所有节点
-    await sio.emit('message_received', message, room=session_id)
+    # 根据消息传达概率决定是否广播消息
+    if should_deliver_message(session_id):
+        await sio.emit('message_received', message, room=session_id)
+        print(f"节点 {node_id} 的准备消息已发送 (传达概率: {session['config'].get('messageDeliveryRate', 100)}%)")
+    else:
+        print(f"节点 {node_id} 的准备消息被丢弃 (传达概率: {session['config'].get('messageDeliveryRate', 100)}%)")
     
     # 检查准备阶段是否完成
     await check_prepare_phase(session_id)
@@ -318,21 +353,24 @@ async def send_commit(sid, data):
     
     session["messages"]["commit"].append(message)
     
-    # 广播给所有节点
-    await sio.emit('message_received', message, room=session_id)
+    # 根据消息传达概率决定是否广播消息
+    if should_deliver_message(session_id):
+        await sio.emit('message_received', message, room=session_id)
+        print(f"节点 {node_id} 的确认消息已发送 (传达概率: {session['config'].get('messageDeliveryRate', 100)}%)")
+    else:
+        print(f"节点 {node_id} 的确认消息被丢弃 (传达概率: {session['config'].get('messageDeliveryRate', 100)}%)")
     
     # 检查提交阶段是否完成
     await check_commit_phase(session_id)
 
 @sio.event
 async def send_message(sid, data):
-    """处理自定义消息"""
+    """处理通用消息（已移除自定义消息功能）"""
     session_id = data.get('sessionId')
     node_id = data.get('nodeId')
     message_type = data.get('type')
     value = data.get('value')
     target = data.get('target')
-    custom_content = data.get('customContent', '')
     
     session = get_session(session_id)
     if not session:
@@ -346,8 +384,7 @@ async def send_message(sid, data):
         "value": value,
         "phase": session.get("phase", "waiting"),
         "timestamp": datetime.now().isoformat(),
-        "tampered": False,
-        "customContent": custom_content
+        "tampered": False
     }
     
     # 根据消息类型存储到相应的消息列表
@@ -356,13 +393,17 @@ async def send_message(sid, data):
     elif message_type == "commit":
         session["messages"]["commit"].append(message)
     else:
-        # 自定义消息或其他类型
-        if "custom" not in session["messages"]:
-            session["messages"]["custom"] = []
-        session["messages"]["custom"].append(message)
+        # 其他类型消息
+        if "other" not in session["messages"]:
+            session["messages"]["other"] = []
+        session["messages"]["other"].append(message)
     
-    # 广播给所有节点
-    await sio.emit('message_received', message, room=session_id)
+    # 根据消息传达概率决定是否广播消息
+    if should_deliver_message(session_id):
+        await sio.emit('message_received', message, room=session_id)
+        print(f"节点 {node_id} 的消息已发送 (传达概率: {session['config'].get('messageDeliveryRate', 100)}%)")
+    else:
+        print(f"节点 {node_id} 的消息被丢弃 (传达概率: {session['config'].get('messageDeliveryRate', 100)}%)")
     
     # 如果是准备或提交消息，检查阶段完成情况
     if message_type == "prepare":
@@ -370,7 +411,7 @@ async def send_message(sid, data):
     elif message_type == "commit":
         await check_commit_phase(session_id)
     
-    print(f"节点 {node_id} 发送自定义消息: {message_type} 到 {target}")
+    print(f"节点 {node_id} 发送消息: {message_type} 到 {target}")
 
 @sio.event
 async def ping(sid, data):
@@ -432,8 +473,12 @@ async def start_consensus(session_id: str):
     
     session["messages"]["pre_prepare"].append(pre_prepare_message)
     
-    # 广播预准备消息
-    await sio.emit('message_received', pre_prepare_message, room=session_id)
+    # 根据消息传达概率决定是否广播预准备消息
+    if should_deliver_message(session_id):
+        await sio.emit('message_received', pre_prepare_message, room=session_id)
+        print(f"提议者的预准备消息已发送 (传达概率: {config.get('messageDeliveryRate', 100)}%)")
+    else:
+        print(f"提议者的预准备消息被丢弃 (传达概率: {config.get('messageDeliveryRate', 100)}%)")
     
     # 更新阶段
     await sio.emit('phase_update', {
@@ -475,8 +520,13 @@ async def check_prepare_phase(session_id: str):
     config = session["config"]
     prepare_messages = session["messages"]["prepare"]
     
-    # 检查是否收到足够的准备消息
-    if len(prepare_messages) >= config["nodeCount"] - 1:  # 除了提议者
+    # 统计不同节点的准备消息（每个节点只统计一次）
+    unique_nodes = set()
+    for msg in prepare_messages:
+        unique_nodes.add(msg["from"])
+    
+    # 检查是否收到足够多不同节点的准备消息
+    if len(unique_nodes) >= config["nodeCount"] - 1:  # 除了提议者
         await start_commit_phase(session_id)
 
 async def start_commit_phase(session_id: str):
@@ -506,8 +556,13 @@ async def check_commit_phase(session_id: str):
     config = session["config"]
     commit_messages = session["messages"]["commit"]
     
-    # 检查是否收到足够的提交消息
-    if len(commit_messages) >= config["nodeCount"] - 1:  # 除了提议者
+    # 统计不同节点的提交消息（每个节点只统计一次）
+    unique_nodes = set()
+    for msg in commit_messages:
+        unique_nodes.add(msg["from"])
+    
+    # 检查是否收到足够多不同节点的提交消息
+    if len(unique_nodes) >= config["nodeCount"] - 1:  # 除了提议者
         await finalize_consensus(session_id)
 
 async def finalize_consensus(session_id: str):
@@ -526,22 +581,64 @@ async def finalize_consensus(session_id: str):
     prepare_messages = session["messages"]["prepare"]
     commit_messages = session["messages"]["commit"]
     
-    # 统计投票结果
+    # 统计参与投票的节点（基于准备阶段消息）
+    node_votes = {}  # 记录每个节点的投票，后面的会覆盖前面的
+    
+    print(f"共识统计 - 准备消息数量: {len(prepare_messages)}")
+    print(f"共识统计 - 提交消息数量: {len(commit_messages)}")
+    print(f"共识统计 - 准备消息: {prepare_messages}")
+    print(f"共识统计 - 提交消息: {commit_messages}")
+    
+    # 统计不同节点的准备消息
+    unique_prepare_nodes = set()
+    for msg in prepare_messages:
+        unique_prepare_nodes.add(msg["from"])
+    
+    # 统计不同节点的提交消息
+    unique_commit_nodes = set()
+    for msg in commit_messages:
+        unique_commit_nodes.add(msg["from"])
+    
+    print(f"共识统计 - 不同准备节点数: {len(unique_prepare_nodes)}")
+    print(f"共识统计 - 不同提交节点数: {len(unique_commit_nodes)}")
+    
+    # 统计每个节点的投票（基于准备阶段消息，后面的消息会覆盖前面的）
+    for msg in prepare_messages:
+        node_id = msg["from"]
+        node_votes[node_id] = msg["value"]  # 后面的消息会覆盖前面的
+    
+    # 统计最终结果
     truth_votes = 0
     falsehood_votes = 0
     rejected_votes = 0
     
-    for msg in prepare_messages + commit_messages:
-        if msg["value"] == 0:
+    for node_id, vote in node_votes.items():
+        if vote == 0:
             truth_votes += 1
-        elif msg["value"] == 1:
+        elif vote == 1:
             falsehood_votes += 1
         else:
             rejected_votes += 1
     
+    print(f"参与投票的节点: {list(node_votes.keys())}")
+    print(f"节点投票详情: {node_votes}")
+    print(f"共识统计结果 - 选择A: {truth_votes}, 选择B: {falsehood_votes}, 拒绝: {rejected_votes}")
+    print(f"预期节点数: {config['nodeCount'] - 1} (除了提议者)")
+    print(f"实际参与节点数: {len(node_votes)}")
+    print(f"准备阶段参与节点数: {len(unique_prepare_nodes)}")
+    print(f"提交阶段参与节点数: {len(unique_commit_nodes)}")
+    
     # 判断共识结果
     total_votes = truth_votes + falsehood_votes + rejected_votes
-    if total_votes == 0:
+    expected_nodes = config['nodeCount']  # 包含所有节点（包括提议者）
+    
+    if len(unique_prepare_nodes) < expected_nodes - 1:  # 准备阶段除了提议者
+        consensus_status = "准备阶段未完成"
+        consensus_description = f"准备阶段需要{expected_nodes - 1}个节点，实际只有{len(unique_prepare_nodes)}个节点参与"
+    elif len(unique_commit_nodes) < expected_nodes:  # 提交阶段包含所有节点
+        consensus_status = "提交阶段未完成"
+        consensus_description = f"提交阶段需要{expected_nodes}个节点，实际只有{len(unique_commit_nodes)}个节点参与"
+    elif total_votes == 0:
         consensus_status = "无诚实节点"
         consensus_description = "没有节点参与共识"
     elif truth_votes + falsehood_votes == 0:
@@ -549,10 +646,10 @@ async def finalize_consensus(session_id: str):
         consensus_description = "所有节点都拒绝了提议"
     elif truth_votes > 0 and falsehood_votes == 0:
         consensus_status = "共识成功"
-        consensus_description = f"所有节点都接受了值 0"
+        consensus_description = f"{truth_votes}个节点接受了值 0"
     elif falsehood_votes > 0 and truth_votes == 0:
         consensus_status = "共识成功"
-        consensus_description = f"所有节点都接受了值 1"
+        consensus_description = f"{falsehood_votes}个节点接受了值 1"
     else:
         consensus_status = "共识失败"
         consensus_description = "节点间存在分歧，共识失败"
@@ -563,7 +660,12 @@ async def finalize_consensus(session_id: str):
         "stats": {
             "truth": truth_votes,
             "falsehood": falsehood_votes,
-            "rejected": rejected_votes
+            "rejected": rejected_votes,
+            "prepare_nodes": len(unique_prepare_nodes),
+            "commit_nodes": len(unique_commit_nodes),
+            "expected_nodes": expected_nodes,
+            "expected_prepare_nodes": expected_nodes - 1,  # 准备阶段除了提议者
+            "total_messages": len(prepare_messages) + len(commit_messages)
         }
     }
     
