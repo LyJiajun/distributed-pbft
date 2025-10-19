@@ -34,6 +34,7 @@ socket_app = socketio.ASGIApp(sio, app)
 class SessionConfig(BaseModel):
     nodeCount: int
     faultyNodes: int
+    robotNodes: int  # 机器人节点数量
     topology: str
     branchCount: Optional[int] = 2
     proposalValue: int
@@ -72,7 +73,12 @@ def create_session(config: SessionConfig) -> SessionInfo:
         "status": "waiting",
         "phase": "waiting",
         "phase_step": 0,
+        "current_round": 1,  # 当前共识轮次
         "connected_nodes": [],
+        "robot_nodes": [],  # 机器人节点列表
+        "human_nodes": [],  # 人类节点列表（拜占庭节点）
+        "robot_node_states": {},  # 机器人节点的状态（记录收到的消息）
+        "timeout_task": None,  # 超时任务
         "messages": {
             "pre_prepare": [],
             "prepare": [],
@@ -80,6 +86,7 @@ def create_session(config: SessionConfig) -> SessionInfo:
         },
         "node_states": {},
         "consensus_result": None,
+        "consensus_history": [],  # 共识历史记录
         "created_at": datetime.now().isoformat()
     }
     
@@ -87,11 +94,15 @@ def create_session(config: SessionConfig) -> SessionInfo:
     connected_nodes[session_id] = []
     node_sockets[session_id] = {}
     
+    # 创建机器人节点并立即开始共识
+    asyncio.create_task(create_robot_nodes_and_start(session_id, config.robotNodes))
+    
     return {
         "sessionId": session_id,
         "config": {
             "nodeCount": config.nodeCount,
             "faultyNodes": config.faultyNodes,
+            "robotNodes": config.robotNodes,
             "topology": config.topology,
             "branchCount": config.branchCount,
             "proposalValue": config.proposalValue,
@@ -165,6 +176,28 @@ async def get_session_info(session_id: str):
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
     return session
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """删除会话并停止所有相关进程"""
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    
+    # 停止会话
+    session["status"] = "stopped"
+    
+    # 清理会话数据
+    if session_id in sessions:
+        del sessions[session_id]
+    if session_id in connected_nodes:
+        del connected_nodes[session_id]
+    if session_id in node_sockets:
+        del node_sockets[session_id]
+    
+    print(f"会话 {session_id} 已被删除并停止")
+    
+    return {"message": "会话已删除"}
 
 @app.get("/api/sessions/{session_id}/status")
 async def get_session_status(session_id: str):
@@ -248,9 +281,19 @@ async def connect(sid, environ, auth):
             connected_nodes[session_id] = []
         if node_id not in connected_nodes[session_id]:
             connected_nodes[session_id].append(node_id)
+            
+            # 标记人类节点为拜占庭节点
+            session = sessions[session_id]
+            if node_id not in session["robot_nodes"]:
+                session["human_nodes"].append(node_id)
+                print(f"人类节点 {node_id} 已连接（拜占庭节点）")
+            else:
+                print(f"机器人节点 {node_id} 已重新连接")
+        
+        session = sessions[session_id]
         
         # 发送会话配置
-        config = sessions[session_id]["config"]
+        config = session["config"]
         print(f"发送会话配置给节点 {node_id}:", config)
         print(f"提议内容检查 - 后端:", {
             'proposalContent': config.get('proposalContent'),
@@ -259,12 +302,9 @@ async def connect(sid, environ, auth):
         })
         await sio.emit('session_config', config, room=sid)
         
-        # 发送当前阶段信息
-        await sio.emit('phase_update', {
-            "phase": sessions[session_id]["phase"],
-            "step": sessions[session_id]["phase_step"],
-            "isMyTurn": False
-        }, room=sid)
+        # 人类节点进入时，不参加当前轮次的共识
+        # 只发送会话配置，不发送当前轮次信息和历史消息
+        print(f"人类节点 {node_id} 进入，等待下一轮共识开始")
         
         # 将节点加入会话房间
         await sio.enter_room(sid, session_id)
@@ -314,7 +354,8 @@ async def send_prepare(sid, data):
         "value": value,
         "phase": "prepare",
         "timestamp": datetime.now().isoformat(),
-        "tampered": False
+        "tampered": False,
+        "byzantine": data.get("byzantine", False)  # 标记是否为拜占庭攻击消息
     }
     
     session["messages"]["prepare"].append(message)
@@ -348,7 +389,8 @@ async def send_commit(sid, data):
         "value": value,
         "phase": "commit",
         "timestamp": datetime.now().isoformat(),
-        "tampered": False
+        "tampered": False,
+        "byzantine": data.get("byzantine", False)  # 标记是否为拜占庭攻击消息
     }
     
     session["messages"]["commit"].append(message)
@@ -360,8 +402,6 @@ async def send_commit(sid, data):
     else:
         print(f"节点 {node_id} 的确认消息被丢弃 (传达概率: {session['config'].get('messageDeliveryRate', 100)}%)")
     
-    # 检查提交阶段是否完成
-    await check_commit_phase(session_id)
 
 @sio.event
 async def send_message(sid, data):
@@ -412,6 +452,75 @@ async def send_message(sid, data):
         await check_commit_phase(session_id)
     
     print(f"节点 {node_id} 发送消息: {message_type} 到 {target}")
+
+@sio.event
+async def choose_normal_consensus(sid, data):
+    """处理人类节点选择正常共识"""
+    session_id = data.get('sessionId')
+    node_id = data.get('nodeId')
+    
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 将此人类节点转为机器人代理模式
+    print(f"人类节点 {node_id} 选择正常共识，切换为机器人代理模式")
+    
+    # 从人类节点列表中移除，加入机器人节点列表（本轮）
+    if node_id in session["human_nodes"]:
+        session["human_nodes"].remove(node_id)
+    
+    # 临时将此节点加入机器人节点列表
+    if node_id not in session["robot_nodes"]:
+        session["robot_nodes"].append(node_id)
+        
+        # 初始化机器人节点状态
+        session["robot_node_states"][node_id] = {
+            "received_pre_prepare": True,
+            "received_prepare_count": len([m for m in session["messages"]["prepare"] if m["from"] != node_id]),
+            "received_commit_count": len([m for m in session["messages"]["commit"] if m["from"] != node_id]),
+            "sent_prepare": False,
+            "sent_commit": False
+        }
+    
+    # 根据当前阶段自动发送消息
+    config = session["config"]
+    
+    if session["phase"] == "prepare" and node_id != 0:
+        # 在准备阶段且不是主节点，发送准备消息
+        asyncio.create_task(schedule_robot_prepare(session_id, node_id, config["proposalValue"]))
+    elif session["phase"] == "commit":
+        # 在提交阶段，发送提交消息
+        asyncio.create_task(schedule_robot_commit(session_id, node_id, config["proposalValue"]))
+
+async def schedule_robot_prepare(session_id: str, robot_id: int, value: int):
+    """调度机器人节点在10秒后发送准备消息"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    current_round = session["current_round"]
+    await asyncio.sleep(10)
+    
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 检查轮次是否改变
+    if session["current_round"] != current_round:
+        print(f"轮次已改变（{current_round} -> {session['current_round']}），节点{robot_id}放弃发送准备消息")
+        return
+    
+    await handle_robot_prepare(session_id, robot_id, value)
+
+@sio.event
+async def choose_byzantine_attack(sid, data):
+    """处理人类节点选择拜占庭攻击"""
+    session_id = data.get('sessionId')
+    node_id = data.get('nodeId')
+    
+    print(f"人类节点 {node_id} 选择拜占庭攻击模式")
+    # 不需要特殊处理，人类节点保持在human_nodes列表中
 
 @sio.event
 async def ping(sid, data):
@@ -520,14 +629,27 @@ async def check_prepare_phase(session_id: str):
     config = session["config"]
     prepare_messages = session["messages"]["prepare"]
     
-    # 统计不同节点的准备消息（每个节点只统计一次）
-    unique_nodes = set()
-    for msg in prepare_messages:
-        unique_nodes.add(msg["from"])
+    # 计算故障节点数 f = floor((n-1)/3)
+    n = config["nodeCount"]
+    f = (n - 1) // 3
+    required_correct_messages = 2 * f + 1  # 需要2f+1个正确消息
     
-    # 检查是否收到足够多不同节点的准备消息
-    if len(unique_nodes) >= config["nodeCount"] - 1:  # 除了提议者
+    # 统计发送正确信息的不同节点（value=0）
+    correct_nodes = set()
+    for msg in prepare_messages:
+        if msg.get("value") == config["proposalValue"]:  # 正确信息
+            correct_nodes.add(msg["from"])
+    
+    print(f"准备阶段检查 - 总节点数: {n}, 故障节点数: {f}")
+    print(f"准备阶段检查 - 需要正确消息数: {required_correct_messages}, 实际正确消息节点数: {len(correct_nodes)}")
+    print(f"准备阶段检查 - 发送正确消息的节点: {correct_nodes}")
+    
+    # 检查是否收到足够多的正确消息
+    if len(correct_nodes) >= required_correct_messages:
+        print(f"准备阶段完成（收到{len(correct_nodes)}个正确消息），进入提交阶段")
         await start_commit_phase(session_id)
+    else:
+        print(f"准备阶段未完成，还需要 {required_correct_messages - len(correct_nodes)} 个正确消息")
 
 async def start_commit_phase(session_id: str):
     """开始提交阶段"""
@@ -546,6 +668,9 @@ async def start_commit_phase(session_id: str):
     }, room=session_id)
     
     print(f"会话 {session_id} 进入提交阶段")
+    
+    # 通知所有机器人节点检查是否可以发送提交消息
+    await check_robot_nodes_ready_for_commit(session_id)
 
 async def check_commit_phase(session_id: str):
     """检查提交阶段是否完成"""
@@ -556,20 +681,58 @@ async def check_commit_phase(session_id: str):
     config = session["config"]
     commit_messages = session["messages"]["commit"]
     
-    # 统计不同节点的提交消息（每个节点只统计一次）
-    unique_nodes = set()
-    for msg in commit_messages:
-        unique_nodes.add(msg["from"])
+    # 计算故障节点数 f = floor((n-1)/3)
+    n = config["nodeCount"]
+    f = (n - 1) // 3
     
-    # 检查是否收到足够多不同节点的提交消息
-    if len(unique_nodes) >= config["nodeCount"] - 1:  # 除了提议者
-        await finalize_consensus(session_id)
+    # 统计发送正确信息和错误信息的不同节点
+    correct_nodes = set()
+    error_nodes = set()
+    
+    for msg in commit_messages:
+        if msg.get("value") == config["proposalValue"]:  # 正确信息
+            correct_nodes.add(msg["from"])
+        else:  # 错误信息
+            error_nodes.add(msg["from"])
+    
+    print(f"提交阶段检查 - 总节点数: {n}, 故障节点数: {f}")
+    print(f"提交阶段检查 - 发送正确消息的节点数: {len(correct_nodes)}")
+    print(f"提交阶段检查 - 发送错误消息的节点数: {len(error_nodes)}")
+    print(f"提交阶段检查 - 正确消息节点: {correct_nodes}")
+    print(f"提交阶段检查 - 错误消息节点: {error_nodes}")
+    print(f"提交阶段检查 - 需要正确消息数: {2*f+1}, 需要错误消息数: {f+1}")
+    
+    # 判断共识结果（基于正确/错误消息数量）
+    if len(correct_nodes) >= 2 * f + 1:  # 包括自己，需要2f+1个正确消息
+        print(f"共识成功 - 收到{len(correct_nodes)}个正确消息（需要{2*f+1}个）")
+        print(f"发送共识结果: 共识成功")
+        await finalize_consensus(session_id, "共识成功", f"收到{len(correct_nodes)}个正确消息")
+    elif len(error_nodes) >= f + 1:  # 包括自己，需要f+1个错误消息
+        print(f"共识失败 - 收到{len(error_nodes)}个错误消息（需要{f+1}个）")
+        print(f"发送共识结果: 共识失败")
+        await finalize_consensus(session_id, "共识失败", f"收到{len(error_nodes)}个错误消息")
+    else:
+        print(f"提交阶段等待中 - 正确消息:{len(correct_nodes)}, 错误消息:{len(error_nodes)}")
 
-async def finalize_consensus(session_id: str):
+async def finalize_consensus(session_id: str, status: str = "共识完成", description: str = "共识已完成"):
     """完成共识"""
     session = get_session(session_id)
     if not session:
         return
+    
+    # 防止重复调用
+    current_round = session["current_round"]
+    if session.get("consensus_finalized_round") == current_round:
+        print(f"第{current_round}轮共识已完成，跳过重复调用")
+        return
+    
+    session["consensus_finalized_round"] = current_round
+    print(f"第{current_round}轮共识完成处理开始")
+    
+    # 取消超时任务
+    if session.get("timeout_task"):
+        session["timeout_task"].cancel()
+        print(f"第{session['current_round']}轮共识已完成，取消超时任务")
     
     session["phase"] = "completed"
     session["phase_step"] = 3
@@ -577,102 +740,23 @@ async def finalize_consensus(session_id: str):
     
     config = session["config"]
     
-    # 计算共识结果
-    prepare_messages = session["messages"]["prepare"]
-    commit_messages = session["messages"]["commit"]
-    
-    # 统计参与投票的节点（基于准备阶段消息）
-    node_votes = {}  # 记录每个节点的投票，后面的会覆盖前面的
-    
-    print(f"共识统计 - 准备消息数量: {len(prepare_messages)}")
-    print(f"共识统计 - 提交消息数量: {len(commit_messages)}")
-    print(f"共识统计 - 准备消息: {prepare_messages}")
-    print(f"共识统计 - 提交消息: {commit_messages}")
-    
-    # 统计不同节点的准备消息
-    unique_prepare_nodes = set()
-    for msg in prepare_messages:
-        unique_prepare_nodes.add(msg["from"])
-    
-    # 统计不同节点的提交消息
-    unique_commit_nodes = set()
-    for msg in commit_messages:
-        unique_commit_nodes.add(msg["from"])
-    
-    print(f"共识统计 - 不同准备节点数: {len(unique_prepare_nodes)}")
-    print(f"共识统计 - 不同提交节点数: {len(unique_commit_nodes)}")
-    
-    # 统计每个节点的投票（基于准备阶段消息，后面的消息会覆盖前面的）
-    for msg in prepare_messages:
-        node_id = msg["from"]
-        node_votes[node_id] = msg["value"]  # 后面的消息会覆盖前面的
-    
-    # 统计最终结果
-    truth_votes = 0
-    falsehood_votes = 0
-    rejected_votes = 0
-    
-    for node_id, vote in node_votes.items():
-        if vote == 0:
-            truth_votes += 1
-        elif vote == 1:
-            falsehood_votes += 1
-        else:
-            rejected_votes += 1
-    
-    print(f"参与投票的节点: {list(node_votes.keys())}")
-    print(f"节点投票详情: {node_votes}")
-    print(f"共识统计结果 - 选择A: {truth_votes}, 选择B: {falsehood_votes}, 拒绝: {rejected_votes}")
-    print(f"预期节点数: {config['nodeCount'] - 1} (除了提议者)")
-    print(f"实际参与节点数: {len(node_votes)}")
-    print(f"准备阶段参与节点数: {len(unique_prepare_nodes)}")
-    print(f"提交阶段参与节点数: {len(unique_commit_nodes)}")
-    
-    # 判断共识结果
-    total_votes = truth_votes + falsehood_votes + rejected_votes
-    expected_nodes = config['nodeCount']  # 包含所有节点（包括提议者）
-    
-    if len(unique_prepare_nodes) < expected_nodes - 1:  # 准备阶段除了提议者
-        consensus_status = "准备阶段未完成"
-        consensus_description = f"准备阶段需要{expected_nodes - 1}个节点，实际只有{len(unique_prepare_nodes)}个节点参与"
-    elif len(unique_commit_nodes) < expected_nodes:  # 提交阶段包含所有节点
-        consensus_status = "提交阶段未完成"
-        consensus_description = f"提交阶段需要{expected_nodes}个节点，实际只有{len(unique_commit_nodes)}个节点参与"
-    elif total_votes == 0:
-        consensus_status = "无诚实节点"
-        consensus_description = "没有节点参与共识"
-    elif truth_votes + falsehood_votes == 0:
-        consensus_status = "拒绝提议"
-        consensus_description = "所有节点都拒绝了提议"
-    elif truth_votes > 0 and falsehood_votes == 0:
-        consensus_status = "共识成功"
-        consensus_description = f"{truth_votes}个节点接受了值 0"
-    elif falsehood_votes > 0 and truth_votes == 0:
-        consensus_status = "共识成功"
-        consensus_description = f"{falsehood_votes}个节点接受了值 1"
-    else:
-        consensus_status = "共识失败"
-        consensus_description = "节点间存在分歧，共识失败"
-    
+    # 创建共识结果
     consensus_result = {
-        "status": consensus_status,
-        "description": consensus_description,
+        "status": status,
+        "description": description,
         "stats": {
-            "truth": truth_votes,
-            "falsehood": falsehood_votes,
-            "rejected": rejected_votes,
-            "prepare_nodes": len(unique_prepare_nodes),
-            "commit_nodes": len(unique_commit_nodes),
-            "expected_nodes": expected_nodes,
-            "expected_prepare_nodes": expected_nodes - 1,  # 准备阶段除了提议者
-            "total_messages": len(prepare_messages) + len(commit_messages)
+            "expected_nodes": config["nodeCount"],
+            "expected_prepare_nodes": config["nodeCount"] - 1,
+            "total_messages": len(session["messages"]["prepare"]) + len(session["messages"]["commit"])
         }
     }
     
     session["consensus_result"] = consensus_result
     
     # 广播共识结果
+    print(f"准备发送共识结果: {consensus_result}")
     await sio.emit('consensus_result', consensus_result, room=session_id)
+    print(f"已发送共识结果到房间: {session_id}")
     
     # 更新阶段
     await sio.emit('phase_update', {
@@ -681,7 +765,406 @@ async def finalize_consensus(session_id: str):
         "isMyTurn": False
     }, room=session_id)
     
-    print(f"会话 {session_id} 共识完成: {consensus_status}")
+    print(f"会话 {session_id} 第{session['current_round']}轮共识完成: {status}")
+    
+    # 保存共识历史
+    session["consensus_history"].append({
+        "round": session["current_round"],
+        "status": status,
+        "description": description,
+        "timestamp": datetime.now().isoformat()
+    })
+    
+    # 启动下一轮共识（10秒后）
+    print(f"将在10秒后开始第{session['current_round'] + 1}轮共识")
+    asyncio.create_task(start_next_round(session_id))
+
+async def handle_consensus_timeout(session_id: str, round_number: int):
+    """处理共识超时"""
+    await asyncio.sleep(40)  # 等待40秒
+    
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 检查是否仍然在同一轮次且未完成共识
+    if session["current_round"] == round_number and session["status"] == "running":
+        print(f"第{round_number}轮共识超时（40秒未完成），判定为共识失败")
+        
+        # 清除超时任务引用，避免在finalize_consensus中尝试取消正在执行的任务
+        session["timeout_task"] = None
+        
+        # 设置共识结果为超时失败
+        await finalize_consensus(session_id, "共识超时失败", "40秒内未达成共识")
+
+async def start_next_round(session_id: str):
+    """启动下一轮共识"""
+    await asyncio.sleep(10)
+    
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 增加轮次
+    session["current_round"] += 1
+    current_round = session["current_round"]
+    
+    # 重置会话状态
+    session["status"] = "running"
+    session["phase"] = "pre-prepare"
+    session["phase_step"] = 0
+    session["consensus_result"] = None
+    
+    # 清空消息
+    session["messages"] = {
+        "pre_prepare": [],
+        "prepare": [],
+        "commit": []
+    }
+    
+    # 将临时机器人节点移回人类节点列表
+    config = session["config"]
+    original_robot_count = config["robotNodes"]
+    
+    print(f"第{current_round}轮开始 - 原始机器人节点数: {original_robot_count}")
+    print(f"第{current_round}轮开始 - 当前机器人节点: {session['robot_nodes']}")
+    print(f"第{current_round}轮开始 - 当前人类节点: {session['human_nodes']}")
+    
+    # 找出临时加入的机器人节点（ID >= original_robot_count）
+    temp_robot_nodes = [node_id for node_id in session["robot_nodes"] if node_id >= original_robot_count]
+    
+    print(f"第{current_round}轮开始 - 临时机器人节点: {temp_robot_nodes}")
+    
+    # 将临时机器人节点移回人类节点列表
+    for node_id in temp_robot_nodes:
+        if node_id in session["robot_nodes"]:
+            session["robot_nodes"].remove(node_id)
+        if node_id not in session["human_nodes"]:
+            session["human_nodes"].append(node_id)
+        # 清除临时机器人节点状态
+        if node_id in session["robot_node_states"]:
+            del session["robot_node_states"][node_id]
+    
+    print(f"已将临时机器人节点 {temp_robot_nodes} 移回人类节点列表")
+    print(f"第{current_round}轮开始后 - 机器人节点: {session['robot_nodes']}")
+    print(f"第{current_round}轮开始后 - 人类节点: {session['human_nodes']}")
+    
+    # 重置机器人节点状态（只重置原始机器人节点）
+    for robot_id in session["robot_nodes"]:
+        session["robot_node_states"][robot_id] = {
+            "received_pre_prepare": False,
+            "received_prepare_count": 0,
+            "received_commit_count": 0,
+            "sent_prepare": False,
+            "sent_commit": False
+        }
+    
+    print(f"会话 {session_id} 开始第{current_round}轮共识")
+    
+    # 通知所有节点（包括等待中的人类节点）进入新一轮共识
+    await sio.emit('new_round', {
+        "round": current_round,
+        "phase": "pre-prepare",
+        "step": 0
+    }, room=session_id)
+    
+    # 通知所有节点进入预准备阶段
+    await sio.emit('phase_update', {
+        "phase": "pre-prepare",
+        "step": 0,
+        "isMyTurn": False
+    }, room=session_id)
+    
+    print(f"第{current_round}轮开始，所有节点（包括新加入的人类节点）现在可以参与共识")
+    
+    # 机器人提议者发送预准备消息
+    await robot_send_pre_prepare(session_id)
+
+# ==================== 辅助函数 ====================
+
+async def broadcast_to_online_nodes(session_id: str, event: str, data: Any):
+    """只向在线的人类节点广播消息，机器人节点总是在线"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 向所有在线的人类节点发送
+    if session_id in node_sockets:
+        for node_id, sid in node_sockets[session_id].items():
+            if node_id in session["human_nodes"]:  # 只向人类节点发送
+                await sio.emit(event, data, room=sid)
+    
+    # 机器人节点不需要接收WebSocket消息，因为它们在后端自动处理
+
+# ==================== 机器人节点管理 ====================
+
+async def create_robot_nodes_and_start(session_id: str, robot_count: int):
+    """创建机器人节点并立即启动PBFT流程"""
+    await asyncio.sleep(1)  # 等待会话初始化
+    
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    print(f"创建{robot_count}个机器人节点")
+    
+    # 机器人节点是0到robotNodes-1，人类节点从robotNodes开始编号
+    for robot_id in range(robot_count):
+        session["robot_nodes"].append(robot_id)
+        connected_nodes[session_id].append(robot_id)
+        print(f"机器人节点 {robot_id} 已创建")
+        
+        # 初始化机器人节点状态
+        session["robot_node_states"][robot_id] = {
+            "received_pre_prepare": False,
+            "received_prepare_count": 0,
+            "received_commit_count": 0,
+            "sent_prepare": False,
+            "sent_commit": False
+        }
+    
+    # 立即开始PBFT共识流程（不等待人类节点）
+    print(f"机器人节点准备完毕，立即开始PBFT共识流程")
+    await start_pbft_process(session_id)
+
+async def start_pbft_process(session_id: str):
+    """启动PBFT共识流程"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 更新会话状态
+    session["status"] = "running"
+    session["phase"] = "pre-prepare"
+    session["phase_step"] = 0
+    
+    # 通知所有节点进入预准备阶段
+    await sio.emit('phase_update', {
+        "phase": "pre-prepare",
+        "step": 0,
+        "isMyTurn": False
+    }, room=session_id)
+    
+    print(f"会话 {session_id} 开始PBFT共识流程")
+    
+    # 提议者发送预准备消息
+    await robot_send_pre_prepare(session_id)
+
+async def robot_send_pre_prepare(session_id: str):
+    """机器人提议者发送预准备消息"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 防止重复调用
+    current_round = session["current_round"]
+    if session.get("last_pre_prepare_round") == current_round:
+        print(f"第{current_round}轮预准备消息已发送，跳过重复调用")
+        return
+    
+    session["last_pre_prepare_round"] = current_round
+    
+    config = session["config"]
+    proposer_id = 0  # 提议者总是节点0
+    
+    # 只有当节点0是机器人节点时才自动发送
+    if proposer_id not in session["robot_nodes"]:
+        print(f"提议者 {proposer_id} 是人类节点，等待人类操作")
+        return
+    
+    # 发送预准备消息
+    message = {
+        "from": proposer_id,
+        "to": "all",
+        "type": "pre_prepare",
+        "value": config["proposalValue"],
+        "phase": "pre-prepare",
+        "timestamp": datetime.now().isoformat(),
+        "tampered": False,
+        "isRobot": True
+    }
+    
+    session["messages"]["pre_prepare"].append(message)
+    
+    # 广播消息
+    await sio.emit('message_received', message, room=session_id)
+    
+    print(f"机器人提议者 {proposer_id} 发送了预准备消息: {config['proposalValue']}")
+    
+    # 进入准备阶段
+    await asyncio.sleep(1)
+    session["phase"] = "prepare"
+    session["phase_step"] = 1
+    
+    await sio.emit('phase_update', {
+        "phase": "prepare",
+        "step": 1,
+        "isMyTurn": True
+    }, room=session_id)
+    
+    print(f"会话 {session_id} 进入准备阶段")
+    
+    # 启动超时任务（40秒后检查）
+    current_round = session["current_round"]
+    timeout_task = asyncio.create_task(handle_consensus_timeout(session_id, current_round))
+    session["timeout_task"] = timeout_task
+    print(f"第{current_round}轮共识超时检查已启动（40秒）")
+    
+    # 标记所有机器人节点已收到预准备消息
+    for robot_id in session["robot_nodes"]:
+        session["robot_node_states"][robot_id]["received_pre_prepare"] = True
+    
+    # 机器人节点自动发送准备消息（10秒后）
+    asyncio.create_task(robot_send_prepare_messages(session_id))
+
+async def robot_send_prepare_messages(session_id: str):
+    """机器人节点自动发送准备消息"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    config = session["config"]
+    current_round = session["current_round"]
+    
+    # 等待10秒后发送准备消息
+    print(f"机器人节点将在10秒后发送准备消息")
+    await asyncio.sleep(10)
+    
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 检查轮次是否改变，如果改变则放弃发送
+    if session["current_round"] != current_round:
+        print(f"轮次已改变（{current_round} -> {session['current_round']}），放弃发送准备消息")
+        return
+    
+    # 所有机器人验证者（除了节点0）发送准备消息
+    for robot_id in session["robot_nodes"]:
+        if robot_id == 0:  # 提议者不发送准备消息
+            continue
+        
+        if session["robot_node_states"][robot_id]["sent_prepare"]:
+            continue  # 已经发送过了
+        
+        # 调用发送准备消息的函数
+        await handle_robot_prepare(session_id, robot_id, config["proposalValue"])
+        session["robot_node_states"][robot_id]["sent_prepare"] = True
+
+async def handle_robot_prepare(session_id: str, robot_id: int, value: int):
+    """处理机器人节点的准备消息"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    message = {
+        "from": robot_id,
+        "to": "all",
+        "type": "prepare",
+        "value": value,
+        "phase": "prepare",
+        "timestamp": datetime.now().isoformat(),
+        "tampered": False,
+        "isRobot": True
+    }
+    
+    session["messages"]["prepare"].append(message)
+    
+    # 广播消息
+    if should_deliver_message(session_id):
+        await sio.emit('message_received', message, room=session_id)
+        print(f"机器人节点 {robot_id} 的准备消息已发送")
+        
+        # 所有机器人节点收到这条消息并更新状态
+        for rid in session["robot_nodes"]:
+            if rid != robot_id:
+                session["robot_node_states"][rid]["received_prepare_count"] += 1
+    
+    # 检查准备阶段是否完成（每次添加消息后检查）
+    await check_prepare_phase(session_id)
+    
+    # 检查是否有机器人节点需要进入提交阶段
+    await check_robot_nodes_ready_for_commit(session_id)
+
+async def check_robot_nodes_ready_for_commit(session_id: str):
+    """检查机器人节点是否准备好发送提交消息"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    if session["phase"] != "commit":
+        return  # 还没进入提交阶段
+    
+    config = session["config"]
+    n = config["nodeCount"]
+    f = (n - 1) // 3
+    required_prepare = 2 * f  # 需要收到2f个准备消息
+    
+    # 检查每个机器人节点是否收到足够的准备消息
+    for robot_id in session["robot_nodes"]:
+        robot_state = session["robot_node_states"][robot_id]
+        
+        # 如果已经发送过提交消息，跳过
+        if robot_state["sent_commit"]:
+            continue
+        
+        # 检查是否收到足够的准备消息
+        if robot_state["received_prepare_count"] >= required_prepare:
+            print(f"机器人节点 {robot_id} 收到足够的准备消息，将在10秒后发送提交消息")
+            asyncio.create_task(schedule_robot_commit(session_id, robot_id, config["proposalValue"]))
+            robot_state["sent_commit"] = True  # 标记为已发送（虽然是异步的）
+
+async def schedule_robot_commit(session_id: str, robot_id: int, value: int):
+    """调度机器人节点在10秒后发送提交消息"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    current_round = session["current_round"]
+    await asyncio.sleep(10)
+    
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    # 检查轮次是否改变
+    if session["current_round"] != current_round:
+        print(f"轮次已改变（{current_round} -> {session['current_round']}），节点{robot_id}放弃发送提交消息")
+        return
+    
+    await handle_robot_commit(session_id, robot_id, value)
+
+async def handle_robot_commit(session_id: str, robot_id: int, value: int):
+    """处理机器人节点的提交消息"""
+    session = get_session(session_id)
+    if not session:
+        return
+    
+    message = {
+        "from": robot_id,
+        "to": "all",
+        "type": "commit",
+        "value": value,
+        "phase": "commit",
+        "timestamp": datetime.now().isoformat(),
+        "tampered": False,
+        "isRobot": True
+    }
+    
+    session["messages"]["commit"].append(message)
+    
+    # 广播消息
+    if should_deliver_message(session_id):
+        await sio.emit('message_received', message, room=session_id)
+        print(f"机器人节点 {robot_id} 的提交消息已发送")
+        
+        # 所有机器人节点收到这条消息并更新状态
+        for rid in session["robot_nodes"]:
+            if rid != robot_id:
+                session["robot_node_states"][rid]["received_commit_count"] += 1
+    
+    # 检查提交阶段是否完成
+    await check_commit_phase(session_id)
 
 if __name__ == "__main__":
     import uvicorn

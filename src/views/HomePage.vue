@@ -2,8 +2,8 @@
   <div class="home-page">
     <el-container>
       <el-header class="header">
-        <h1>Distributed PBFT Consensus System</h1>
-        <p>Create consensus sessions and let users play nodes to participate in the consensus process</p>
+        <h1>分布式PBFT共识系统</h1>
+        <p>创建共识会话，让用户扮演节点参与共识过程</p>
       </el-header>
       
       <el-main class="main-content">
@@ -13,7 +13,7 @@
             <el-card class="config-card">
               <template #header>
                 <div class="card-header">
-                  <span>Consensus Parameter Configuration</span>
+                  <span>共识参数配置</span>
                 </div>
               </template>
               
@@ -24,36 +24,37 @@
                 label-width="120px"
                 class="config-form"
               >
-                <el-form-item label="Total Nodes" prop="nodeCount">
+                <el-form-item label="总节点数" prop="nodeCount">
                   <el-input-number 
                     v-model="formData.nodeCount" 
                     :min="3" 
                     :max="20"
                     controls-position="right"
                   />
-                  <span class="form-tip">Recommended 3-20 nodes</span>
+                  <span class="form-tip">建议3-20个节点</span>
                 </el-form-item>
                 
-                <el-form-item label="Faulty Nodes" prop="faultyNodes">
+                <el-form-item label="故障节点数" prop="faultyNodes">
                   <el-input-number 
                     v-model="formData.faultyNodes" 
                     :min="0" 
                     :max="formData.nodeCount"
                     controls-position="right"
                   />
-                  <span class="form-tip">All nodes can choose to become Byzantine nodes</span>
+                  <span class="form-tip">所有节点都可以选择成为拜占庭节点</span>
                 </el-form-item>
                 
-                <el-form-item label="Topology" prop="topology">
-                  <el-select v-model="formData.topology" placeholder="Select topology">
-                    <el-option label="Full Connected" value="full" />
-                    <el-option label="Ring" value="ring" />
-                    <el-option label="Star" value="star" />
-                    <el-option label="Tree" value="tree" />
+                
+                <el-form-item label="拓扑结构" prop="topology">
+                  <el-select v-model="formData.topology" placeholder="选择拓扑结构">
+                    <el-option label="全连接" value="full" />
+                    <el-option label="环形" value="ring" />
+                    <el-option label="星形" value="star" />
+                    <el-option label="树形" value="tree" />
                   </el-select>
                 </el-form-item>
                 
-                <el-form-item label="Branch Count" v-if="formData.topology === 'tree'" prop="branchCount">
+                <el-form-item label="分支数量" v-if="formData.topology === 'tree'" prop="branchCount">
                   <el-input-number 
                     v-model="formData.branchCount" 
                     :min="2" 
@@ -62,34 +63,34 @@
                   />
                 </el-form-item>
                 
-                <el-form-item label="Proposal Value" prop="proposalValue">
+                <el-form-item label="提议值" prop="proposalValue">
                   <el-radio-group v-model="formData.proposalValue">
                     <el-radio :label="0">0</el-radio>
                     <el-radio :label="1">1</el-radio>
                   </el-radio-group>
                 </el-form-item>
                 
-                <el-form-item label="Proposal Content" prop="proposalContent">
+                <el-form-item label="提议内容" prop="proposalContent">
                   <el-input 
                     v-model="formData.proposalContent" 
                     type="textarea" 
                     :rows="3"
-                    placeholder="Enter specific proposal content, e.g., 'Have hotpot for lunch today', 'Choose plan A', etc."
+                    placeholder="输入具体的提议内容，例如：'今天中午吃火锅'、'选择方案A'等"
                   />
-                  <span class="form-tip">Enter specific proposal content that will be displayed on the node page</span>
+                  <span class="form-tip">输入具体的提议内容，将在节点页面显示</span>
                 </el-form-item>
                 
-                <el-form-item label="Malicious Proposer" prop="maliciousProposer">
+                <el-form-item label="恶意提议者" prop="maliciousProposer">
                   <el-switch v-model="formData.maliciousProposer" />
-                  <span class="form-tip">When enabled, the proposer may send incorrect values</span>
+                  <span class="form-tip">启用时，提议者可能发送错误的值</span>
                 </el-form-item>
                 
-                <el-form-item label="Allow Message Tampering" prop="allowTampering">
+                <el-form-item label="允许消息篡改" prop="allowTampering">
                   <el-switch v-model="formData.allowTampering" />
-                  <span class="form-tip">When enabled, faulty nodes may tamper with messages</span>
+                  <span class="form-tip">启用时，故障节点可能篡改消息</span>
                 </el-form-item>
                 
-                <el-form-item label="Message Delivery Rate" prop="messageDeliveryRate">
+                <el-form-item label="消息传递率" prop="messageDeliveryRate">
                   <el-slider 
                     v-model="formData.messageDeliveryRate" 
                     :min="50" 
@@ -99,14 +100,14 @@
                     show-input
                     :format-tooltip="(val) => `${val}%`"
                   />
-                  <span class="form-tip">Simulate network packet loss to test the impact of network reliability on consensus</span>
+                  <span class="form-tip">模拟网络丢包，测试网络可靠性对共识的影响</span>
                 </el-form-item>
                 
                 <el-form-item>
                   <el-button type="primary" @click="createSession" :loading="creating">
-                    Create Consensus Session
+                    创建共识会话
                   </el-button>
-                  <el-button @click="resetForm">Reset</el-button>
+                  <el-button @click="resetForm">重置</el-button>
                 </el-form-item>
               </el-form>
             </el-card>
@@ -117,37 +118,39 @@
             <el-card class="qr-card" v-if="sessionInfo">
               <template #header>
                 <div class="card-header">
-                  <span>Session Information</span>
+                  <span>会话信息</span>
                 </div>
               </template>
               
               <div class="session-info">
                 <el-descriptions :column="1" border>
-                  <el-descriptions-item label="Session ID">{{ sessionInfo.sessionId }}</el-descriptions-item>
-                  <el-descriptions-item label="Total Nodes">{{ sessionInfo.config.nodeCount }}</el-descriptions-item>
-                  <el-descriptions-item label="Faulty Nodes">{{ sessionInfo.config.faultyNodes }}</el-descriptions-item>
-                  <el-descriptions-item label="Topology">{{ getTopologyName(sessionInfo.config.topology) }}</el-descriptions-item>
-                  <el-descriptions-item label="Proposal Value">{{ sessionInfo.config.proposalValue }}</el-descriptions-item>
-                  <el-descriptions-item label="Proposal Content">{{ sessionInfo.config.proposalContent || 'None' }}</el-descriptions-item>
-                  <el-descriptions-item label="Message Delivery Rate">{{ sessionInfo.config.messageDeliveryRate }}%</el-descriptions-item>
-                  <el-descriptions-item label="Status">{{ sessionInfo.status }}</el-descriptions-item>
+                  <el-descriptions-item label="会话ID">{{ sessionInfo.sessionId }}</el-descriptions-item>
+                  <el-descriptions-item label="总节点数">{{ sessionInfo.config.nodeCount }}</el-descriptions-item>
+                  <el-descriptions-item label="故障节点数">{{ sessionInfo.config.faultyNodes }}</el-descriptions-item>
+                  <el-descriptions-item label="机器人节点数">{{ sessionInfo.config.robotNodes }}</el-descriptions-item>
+                  <el-descriptions-item label="人类节点数">{{ sessionInfo.config.nodeCount - sessionInfo.config.robotNodes }}</el-descriptions-item>
+                  <el-descriptions-item label="拓扑结构">{{ getTopologyName(sessionInfo.config.topology) }}</el-descriptions-item>
+                  <el-descriptions-item label="提议值">{{ sessionInfo.config.proposalValue }}</el-descriptions-item>
+                  <el-descriptions-item label="提议内容">{{ sessionInfo.config.proposalContent || '无' }}</el-descriptions-item>
+                  <el-descriptions-item label="消息传递率">{{ sessionInfo.config.messageDeliveryRate }}%</el-descriptions-item>
+                  <el-descriptions-item label="状态">{{ sessionInfo.status }}</el-descriptions-item>
                 </el-descriptions>
                 
                 <div class="qr-section">
-                  <h3>Scan QR Code to Join Node</h3>
+                  <h3>扫描二维码加入节点</h3>
                   <div class="qr-container" ref="qrContainer"></div>
-                  <p class="qr-tip">Other users can scan this QR code to join the consensus process</p>
+                  <p class="qr-tip">其他用户可以扫描此二维码加入共识过程</p>
                 </div>
                 
                 <div class="node-links">
-                  <h3>Node Links</h3>
+                  <h3>节点链接</h3>
                   <el-table :data="nodeLinks" style="width: 100%">
-                    <el-table-column prop="nodeId" label="Node ID" width="80" />
-                    <el-table-column prop="url" label="Link" />
-                    <el-table-column label="Action" width="120">
+                    <el-table-column prop="nodeId" label="节点ID" width="80" />
+                    <el-table-column prop="url" label="链接" />
+                    <el-table-column label="操作" width="120">
                       <template #default="scope">
                         <el-button size="small" @click="copyLink(scope.row.url)">
-                          Copy Link
+                          复制链接
                         </el-button>
                       </template>
                     </el-table-column>
@@ -159,15 +162,15 @@
             <el-card class="welcome-card" v-else>
               <template #header>
                 <div class="card-header">
-                  <span>Welcome</span>
+                  <span>欢迎</span>
                 </div>
               </template>
               
               <div class="welcome-content">
                 <el-icon size="60" color="#409EFF"><Connection /></el-icon>
-                <h2>Distributed PBFT Consensus System</h2>
-                <p>Configure parameters to create a consensus session and generate QR codes for other users to scan and join</p>
-                <p>Each user will play a node and participate in the consensus process in real-time</p>
+                <h2>分布式PBFT共识系统</h2>
+                <p>配置参数创建共识会话，生成二维码供其他用户扫描加入</p>
+                <p>每个用户将扮演一个节点，实时参与共识过程</p>
               </div>
             </el-card>
           </el-col>
@@ -205,13 +208,13 @@ export default {
     
     const rules = {
       nodeCount: [
-        { required: true, message: 'Please enter total number of nodes', trigger: 'blur' }
+        { required: true, message: '请输入总节点数', trigger: 'blur' }
       ],
       faultyNodes: [
-        { required: true, message: 'Please enter number of faulty nodes', trigger: 'blur' }
+        { required: true, message: '请输入故障节点数', trigger: 'blur' }
       ],
       topology: [
-        { required: true, message: 'Please select topology', trigger: 'change' }
+        { required: true, message: '请选择拓扑结构', trigger: 'change' }
       ]
     }
     
@@ -219,10 +222,15 @@ export default {
       if (!sessionInfo.value) return []
       
       const links = []
-      for (let i = 0; i < sessionInfo.value.config.nodeCount; i++) {
+      const robotNodes = sessionInfo.value.config.robotNodes || 0
+      const humanNodeCount = sessionInfo.value.config.nodeCount - robotNodes
+      
+      // 只显示人类节点的链接，从robotNodes开始编号
+      for (let i = 0; i < humanNodeCount; i++) {
+        const nodeId = robotNodes + i
         links.push({
-          nodeId: i,
-          url: `${window.location.origin}/node/${sessionInfo.value.sessionId}/${i}`
+          nodeId: nodeId,
+          url: `${window.location.origin}/node/${sessionInfo.value.sessionId}/${nodeId}`
         })
       }
       return links
@@ -230,10 +238,10 @@ export default {
     
     const getTopologyName = (topology) => {
       const names = {
-        full: 'Full Connected',
-        ring: 'Ring',
-        star: 'Star',
-        tree: 'Tree'
+        full: '全连接',
+        ring: '环形',
+        star: '星形',
+        tree: '树形'
       }
       return names[topology] || topology
     }
@@ -243,24 +251,35 @@ export default {
         await formRef.value.validate()
         creating.value = true
         
-        const response = await axios.post('/api/sessions', {
-          nodeCount: formData.nodeCount,
-          faultyNodes: formData.faultyNodes,
-          topology: formData.topology,
-          branchCount: formData.branchCount,
-          proposalValue: formData.proposalValue,
-          proposalContent: formData.proposalContent,
-          maliciousProposer: formData.maliciousProposer,
-          allowTampering: formData.allowTampering,
-          messageDeliveryRate: formData.messageDeliveryRate
-        })
+        // 如果已有会话，先废弃之前的会话
+        if (sessionInfo.value) {
+          try {
+            await axios.delete(`/api/sessions/${sessionInfo.value.sessionId}`)
+            console.log('已废弃之前的会话:', sessionInfo.value.sessionId)
+          } catch (error) {
+            console.warn('废弃之前会话失败:', error)
+          }
+        }
+        
+      const response = await axios.post('/api/sessions', {
+        nodeCount: formData.nodeCount,
+        faultyNodes: formData.faultyNodes,
+        robotNodes: formData.nodeCount - formData.faultyNodes, // 自动计算机器人节点数
+        topology: formData.topology,
+        branchCount: formData.branchCount,
+        proposalValue: formData.proposalValue,
+        proposalContent: formData.proposalContent,
+        maliciousProposer: formData.maliciousProposer,
+        allowTampering: formData.allowTampering,
+        messageDeliveryRate: formData.messageDeliveryRate
+      })
         
         sessionInfo.value = response.data
         
-        ElMessage.success('Consensus session created successfully!')
+        ElMessage.success('共识会话创建成功！')
       } catch (error) {
         console.error('Failed to create session:', error)
-        ElMessage.error('Failed to create session, please try again')
+        ElMessage.error('创建会话失败，请重试')
       } finally {
         creating.value = false
       }
@@ -350,9 +369,9 @@ export default {
         // Show error message and fallback link
         qrContainer.value.innerHTML = `
           <div style="color: red; padding: 20px; text-align: center;">
-            <div>QR code generation failed</div>
+            <div>二维码生成失败</div>
             <div style="margin-top: 10px; font-size: 12px;">
-              Please use the following link to join:<br>
+              请使用以下链接加入：<br>
               <a href="${window.location.origin}/join/${sessionInfo.value.sessionId}" target="_blank">
                 ${window.location.origin}/join/${sessionInfo.value.sessionId}
               </a>
@@ -365,9 +384,9 @@ export default {
     const copyLink = async (url) => {
       try {
         await navigator.clipboard.writeText(url)
-        ElMessage.success('Link copied to clipboard')
+        ElMessage.success('链接已复制到剪贴板')
       } catch (error) {
-        ElMessage.error('Copy failed')
+        ElMessage.error('复制失败')
       }
     }
     

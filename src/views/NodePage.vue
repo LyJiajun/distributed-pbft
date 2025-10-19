@@ -4,15 +4,16 @@
       <el-header class="header">
         <div class="header-content">
           <div class="node-info">
-            <h2 :class="{ 'bad-node': attackForm.enabled }">Participant {{ nodeId }}</h2>
+            <h2>参与者 {{ nodeId }}</h2>
             <el-tag :type="connectionStatus === 'connected' ? 'success' : 'danger'">
-              {{ connectionStatus === 'connected' ? 'Connected' : 'Disconnected' }}
+              {{ connectionStatus === 'connected' ? '已连接' : '未连接' }}
             </el-tag>
-            <el-tag v-if="attackForm.enabled" type="danger" effect="dark">🦹 Byzantine Node</el-tag>
+            <el-tag type="danger" effect="dark">🦹 拜占庭节点（人类玩家）</el-tag>
           </div>
           <div class="session-info">
-            <span>Session: {{ sessionId }}</span>
-            <el-button size="small" @click="leaveSession" type="danger">Leave Session</el-button>
+            <span>会话: {{ sessionId }}</span>
+            <el-tag type="primary">第{{ currentRound }}轮</el-tag>
+            <el-button size="small" @click="leaveSession" type="danger">离开会话</el-button>
           </div>
         </div>
       </el-header>
@@ -21,10 +22,23 @@
         <el-row :gutter="20">
           <!-- Left: Consensus Progress -->
           <el-col :span="6">
+            <!-- Advanced Options Toggle -->
+            <div style="margin-bottom: 15px;">
+              <el-button 
+                @click="showAdvancedOptions = !showAdvancedOptions" 
+                :type="showAdvancedOptions ? 'primary' : 'info'"
+                size="default"
+                style="width: 100%;"
+              >
+                {{ showAdvancedOptions ? '隐藏高级选项' : '显示高级选项' }}
+              </el-button>
+            </div>
+            
             <el-card class="progress-card">
               <template #header>
                 <div class="card-header">
-                  <span>Consensus Progress</span>
+                  <span>共识进度</span>
+                  <el-tag type="primary" size="large" effect="dark">第 {{ currentRound }} 轮</el-tag>
                 </div>
               </template>
               
@@ -38,182 +52,141 @@
                   />
                   <div class="phase-steps">
                     <el-steps :active="phaseStep" finish-status="success" simple>
-                      <el-step title="Propose" description="Initiate proposal" />
-                      <el-step title="Prepare" description="Validate proposal" />
-                      <el-step title="Commit" description="Confirm proposal" />
-                      <el-step title="Complete" description="Reach consensus" />
+                      <el-step title="提议" description="发起提议" />
+                      <el-step title="准备" description="验证提议" />
+                      <el-step title="提交" description="确认提议" />
+                      <el-step title="完成" description="达成共识" />
                     </el-steps>
                   </div>
                 </div>
                 
                 <!-- Current Status -->
                 <div class="current-status">
-                  <h4>Current Status</h4>
+                  <h4>当前状态</h4>
                   <el-descriptions :column="1" border size="small">
-                    <el-descriptions-item label="Current Phase">{{ getPhaseDisplayName(currentPhase) }}</el-descriptions-item>
-                    <el-descriptions-item label="Accepted Content">{{ getAcceptedContentDisplay() }}</el-descriptions-item>
-                    <el-descriptions-item label="Network Reliability">{{ sessionConfig.messageDeliveryRate ?? 'Not Set' }}%</el-descriptions-item>
+                    <el-descriptions-item label="当前阶段">{{ getPhaseDisplayName(currentPhase) }}</el-descriptions-item>
+                    <el-descriptions-item label="已接受内容">{{ getAcceptedContentDisplay() }}</el-descriptions-item>
+                    <el-descriptions-item label="网络可靠性">{{ sessionConfig.messageDeliveryRate ?? '未设置' }}%</el-descriptions-item>
                   </el-descriptions>
                 </div>
                 
-                <!-- Quick Actions -->
-                <!-- Validator Quick Actions -->
-                <div class="quick-actions" v-if="isMyTurn">
-                  <h4>Quick Actions</h4>
-                  <div class="quick-actions-buttons">
-                    <el-button 
-                      type="primary" 
-                      @click="sendPrepare" 
-                      :disabled="currentPhase !== 'prepare'"
-                      class="quick-action-btn"
-                    >
-                      Send Prepare Message
-                    </el-button>
-                    <el-button 
-                      type="success" 
-                      @click="sendCommit" 
-                      :disabled="currentPhase !== 'commit'"
-                      class="quick-action-btn"
-                    >
-                      Send Commit Message
-                    </el-button>
+                <!-- Human Node Actions -->
+                <div class="human-node-actions">
+                  <h4>操作选择</h4>
+                  
+                  <!-- 等待下一轮共识 -->
+                  <div v-if="waitingForNextRound">
+                    <el-alert
+                      title="等待下一轮共识开始"
+                      description="您在当前轮次进入系统，将在下一轮共识开始时参与。请耐心等待..."
+                      type="info"
+                      :closable="false"
+                      show-icon
+                    />
                   </div>
-                </div>
-
-                <!-- Proposer Quick Actions -->
-                <div class="quick-actions" v-if="canProposerSendCustom">
-                  <h4>Proposer Actions</h4>
-                  <div class="quick-actions-buttons">
-                    <el-button 
-                      type="success" 
-                      @click="sendCommit" 
-                      :disabled="currentPhase !== 'commit'"
-                      class="quick-action-btn"
-                    >
-                      Send Commit Message
-                    </el-button>
-                    <div class="proposer-info">
-                      <el-tag type="info" size="small">Proposer doesn't send prepare messages, but can send commit messages</el-tag>
+                  
+                  <!-- 可以选择操作 -->
+                  <div v-else>
+                    <div class="action-buttons" style="display: flex; flex-direction: column; align-items: stretch;">
+                      <el-button 
+                        type="success" 
+                        @click="chooseNormalConsensus" 
+                        :disabled="hasChosenAction"
+                        size="default"
+                        style="width: 100%; margin-bottom: 15px; padding: 8px 20px; border-width: 1px; box-sizing: border-box;"
+                      >
+                        {{ hasChosenAction && isNormalMode ? '✓ 已选择正常共识（机器人代理）' : '正常共识' }}
+                      </el-button>
+                      <el-button 
+                        type="danger" 
+                        @click="chooseByzantineAttack" 
+                        :disabled="hasChosenAction"
+                        size="default"
+                        style="width: 100%; padding: 8px 20px; border-width: 1px; box-sizing: border-box;"
+                      >
+                        {{ hasChosenAction && !isNormalMode ? '✓ 已选择拜占庭攻击' : '拜占庭攻击' }}
+                      </el-button>
+                    </div>
+                    <div class="action-tip" style="margin-top: 10px;">
+                      <el-alert
+                        v-if="!hasChosenAction"
+                        title="请选择本轮的操作方式"
+                        description="选择正常共识后，机器人将代替您执行正确的PBFT流程；选择拜占庭攻击后，您可以手动发送错误信息。"
+                        type="info"
+                        :closable="false"
+                      />
+                      <el-alert
+                        v-if="hasChosenAction && isNormalMode"
+                        title="机器人代理模式"
+                        description="机器人正在代替您执行正确的PBFT流程，您无需操作。"
+                        type="success"
+                        :closable="false"
+                      />
+                      <el-alert
+                        v-if="hasChosenAction && !isNormalMode"
+                        title="拜占庭攻击模式"
+                        description="您可以在适当时机发送错误信息来干扰共识。"
+                        type="warning"
+                        :closable="false"
+                      />
                     </div>
                   </div>
                 </div>
 
 
 
-                <!-- Byzantine Attack Control Area -->
-                <div class="attack-control">
+                <!-- Byzantine Attack Control Area (only show when Byzantine mode chosen) -->
+                <div class="attack-control" v-if="hasChosenAction && !isNormalMode">
                   <el-divider content-position="left">
-                    <span style="color: #f56c6c; font-weight: bold;">🦹 Byzantine Attack Control</span>
+                    <span style="color: #f56c6c; font-weight: bold;">🦹 拜占庭攻击操作</span>
                   </el-divider>
                   
-                  <el-form :model="attackForm" label-width="100px" size="small">
-                    <el-form-item label="Become Byzantine Node">
-                      <el-switch 
-                        v-model="attackForm.enabled" 
-                        active-text="Yes"
-                        inactive-text="No"
-                        @change="toggleAttackMode"
-                      />
-                      <span class="form-tip">Choose whether to become a Byzantine node for attacks</span>
-                    </el-form-item>
-
-                    <el-form-item v-if="attackForm.enabled" label="Attack Intensity">
-                      <el-slider 
-                        v-model="attackForm.intensity" 
-                        :min="1" 
-                        :max="10" 
-                        :step="1"
-                        show-stops
-                        show-input
-                      />
-                    </el-form-item>
-
-                    <el-form-item v-if="attackForm.enabled" label="Attack Strategy">
-                      <el-radio-group v-model="attackForm.byzantineStrategy">
-                        <el-radio label="always">Always send incorrect values</el-radio>
-                        <el-radio label="sometimes">Sometimes send incorrect values</el-radio>
-                        <el-radio label="random">Randomly send different values</el-radio>
-                        <el-radio label="targeted">Send different values to different nodes</el-radio>
-                      </el-radio-group>
-                    </el-form-item>
-
-                    <el-form-item v-if="attackForm.enabled && attackForm.byzantineStrategy === 'targeted'" label="Target Node Configuration">
-                      <div style="margin-bottom: 10px;">
-                        <el-button size="small" @click="addTargetNode">Add Target Node</el-button>
-                        <el-button size="small" @click="clearTargetNodes">Clear Configuration</el-button>
-                      </div>
-                      <div v-for="(target, index) in attackForm.targetNodes" :key="index" style="margin-bottom: 8px;">
-                        <el-row :gutter="10">
-                          <el-col :span="8">
-                            <el-select v-model="target.nodeId" placeholder="Select Node" size="small">
-                              <el-option 
-                                v-for="nodeId in availableTargetNodes" 
-                                :key="nodeId" 
-                                :label="`Node ${nodeId}`" 
-                                :value="nodeId"
-                              />
-                            </el-select>
-                          </el-col>
-                          <el-col :span="8">
-                            <el-select v-model="target.value" placeholder="Send Value" size="small">
-                              <el-option label="0" :value="0" />
-                              <el-option label="1" :value="1" />
-                              <el-option label="Random" :value="null" />
-                            </el-select>
-                          </el-col>
-                          <el-col :span="4">
-                            <el-button 
-                              type="danger" 
-                              size="small" 
-                              @click="removeTargetNode(index)"
-                              icon="Delete"
-                            />
-                          </el-col>
-                        </el-row>
-                      </div>
-                    </el-form-item>
-
-                    <el-form-item>
-                      <el-button 
-                        type="danger" 
-                        @click="toggleAttackMode" 
-                        :icon="attackForm.enabled ? 'Close' : 'VideoPlay'"
-                        style="width: 100%"
-                      >
-                        {{ attackForm.enabled ? 'Stop Byzantine Attack' : 'Start Byzantine Attack' }}
-                      </el-button>
-                    </el-form-item>
-                  </el-form>
-
-                  <!-- Attack Statistics -->
-                  <div class="attack-stats" v-if="attackForm.enabled">
-                    <h5 style="color: #f56c6c; margin: 10px 0;">Byzantine Attack Effect Statistics</h5>
-                    <el-descriptions :column="2" border size="small">
-                      <el-descriptions-item label="Incorrect Messages">{{ attackStats.byzantineMessages }}</el-descriptions-item>
-                      <el-descriptions-item label="Targeted Attacks">{{ attackStats.targetedMessages }}</el-descriptions-item>
-                    </el-descriptions>
+                  <div class="simple-attack-control">
+                    <el-button 
+                      type="danger" 
+                      @click="sendErrorMessage" 
+                      style="width: 100%"
+                      size="large"
+                    >
+                      发送错误信息
+                    </el-button>
+                    <div class="attack-tip" style="margin-top: 10px;">
+                      <el-tag type="info" size="small">点击按钮发送与当前共识值相反的错误信息</el-tag>
+                    </div>
                   </div>
+                </div>
+                
+                <!-- Consensus Result Display -->
+                <div class="consensus-result-control" style="margin-top: 20px; border-top: 1px solid #e4e7ed; padding-top: 15px;">
+                  <el-button 
+                    type="primary" 
+                    @click="showConsensusResult" 
+                    size="large"
+                    style="width: 100%"
+                  >
+                    显示共识结果
+                  </el-button>
                 </div>
               </div>
             </el-card>
           </el-col>
           
           <!-- Middle: Received Messages -->
-          <el-col :span="6">
+          <el-col :span="6" v-if="showAdvancedOptions">
             <el-card class="messages-card">
               <template #header>
                 <div class="card-header">
-                  <span>Received Messages</span>
+                  <span>收到的消息</span>
                   <div>
-                    <el-button size="small" @click="exportMessages">Export</el-button>
-                    <el-button size="small" @click="clearMessages">Clear</el-button>
+                    <el-button size="small" @click="exportMessages">导出</el-button>
+                    <el-button size="small" @click="clearMessages">清除</el-button>
                   </div>
                 </div>
               </template>
               
               <div class="messages-container">
                 <div class="messages-header">
-                  <span>Message Count: {{ receivedMessages.length }}</span>
+                  <span>消息数量: {{ receivedMessages.length }}</span>
                 </div>
                 
                 <div class="message-list">
@@ -223,41 +196,41 @@
                     class="message-item-compact"
                   >
                     <div class="message-header-compact">
-                      <span class="message-from">From: Participant{{ msg.from }}</span>
+                      <span class="message-from">来自: 参与者{{ msg.from }}</span>
                       <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
                     </div>
                     <div class="message-content-compact">
                       <span class="message-type">{{ getMessageTypeName(msg.type) }}</span>
                       <span class="message-value" v-if="msg.value !== null">
-                        Content: {{ msg.value === -1 ? 'Reject' : (msg.value === 0 ? 'Option A' : 'Option B') }}
+                        内容: {{ msg.value === -1 ? '拒绝' : (msg.value === 0 ? '选项A' : '选项B') }}
                       </span>
                     </div>
                   </div>
                 </div>
                 
                 <div v-if="receivedMessages.length === 0" class="no-messages">
-                  <el-empty description="No messages yet" :image-size="60" />
+                  <el-empty description="暂无消息" :image-size="60" />
                 </div>
               </div>
             </el-card>
           </el-col>
           
           <!-- Right: Topology and Consensus Results -->
-          <el-col :span="12">
+          <el-col :span="12" v-if="showAdvancedOptions">
             <!-- Topology -->
             <el-card class="topology-card">
               <template #header>
                 <div class="card-header">
-                  <span>Network Topology Map</span>
-                  <el-button size="small" @click="refreshTopology">Refresh</el-button>
+                  <span>网络拓扑图</span>
+                  <el-button size="small" @click="refreshTopology">刷新</el-button>
                 </div>
               </template>
               
               <div class="dynamic-topology">
                 <div class="topology-info">
-                  <p><strong>Network Type:</strong> {{ getTopologyName(sessionConfig.topology) }}</p>
-                  <p><strong>Total Participants:</strong> {{ sessionConfig.nodeCount }}</p>
-                  <p><strong>Active Connections:</strong> {{ getActiveConnections() }}</p>
+                  <p><strong>网络类型:</strong> {{ getTopologyName(sessionConfig.topology) }}</p>
+                  <p><strong>总参与者:</strong> {{ sessionConfig.nodeCount }}</p>
+                  <p><strong>活跃连接:</strong> {{ getActiveConnections() }}</p>
                 </div>
                 
                 <!-- Topology Container -->
@@ -302,95 +275,37 @@
                   </div>
                 </div>
                 
-                <!-- Consensus Results -->
-                <div class="consensus-result-section">
-                  <div v-if="consensusResult" class="result-summary">
-                    <el-alert
-                      :title="consensusResult.status"
-                      :type="getConsensusAlertType(consensusResult.status)"
-                      :description="consensusResult.description"
-                      show-icon
-                      :closable="false"
-                      style="margin-bottom: 15px;"
-                    />
-                    
-                    <div class="consensus-stats">
-                      <el-row :gutter="20">
-                        <el-col :span="6">
-                          <div class="consensus-stat-item">
-                            <div class="consensus-stat-number">{{ consensusResult.stats.truth }}</div>
-                            <div class="consensus-stat-label">Option A (Nodes)</div>
-                          </div>
-                        </el-col>
-                        <el-col :span="6">
-                          <div class="consensus-stat-item">
-                            <div class="consensus-stat-number">{{ consensusResult.stats.falsehood }}</div>
-                            <div class="consensus-stat-label">Option B (Nodes)</div>
-                          </div>
-                        </el-col>
-                        <el-col :span="6">
-                          <div class="consensus-stat-item">
-                            <div class="consensus-stat-number">{{ consensusResult.stats.rejected }}</div>
-                            <div class="consensus-stat-label">Rejected (Nodes)</div>
-                          </div>
-                        </el-col>
-                        <el-col :span="6">
-                          <div class="consensus-stat-item">
-                            <div class="consensus-stat-number">{{ consensusResult.stats.prepare_nodes }}/{{ consensusResult.stats.expected_prepare_nodes || consensusResult.stats.expected_nodes - 1 }}</div>
-                            <div class="consensus-stat-label">Prepare Phase Participants</div>
-                          </div>
-                        </el-col>
-                      </el-row>
-                      <el-row :gutter="20" style="margin-top: 10px;">
-                        <el-col :span="6">
-                          <div class="consensus-stat-item">
-                            <div class="consensus-stat-number">{{ consensusResult.stats.commit_nodes }}/{{ consensusResult.stats.expected_nodes }}</div>
-                            <div class="consensus-stat-label">Commit Phase Participants</div>
-                          </div>
-                        </el-col>
-                        <el-col :span="6">
-                          <div class="consensus-stat-item">
-                            <div class="consensus-stat-number">{{ consensusResult.stats.total_messages }}</div>
-                            <div class="consensus-stat-label">Total Messages</div>
-                          </div>
-                        </el-col>
-                      </el-row>
-                    </div>
-                  </div>
-                  <div v-else class="consensus-no-result">
-                    <el-empty description="Consensus not yet completed" :image-size="60" />
-                  </div>
-                </div>
               </div>
             </el-card>
+            
           </el-col>
         </el-row>
       </el-main>
     </el-container>
     
     <!-- Node Details Dialog -->
-    <el-dialog v-model="nodeDetailsVisible" title="Participant Details" width="500px">
+    <el-dialog v-model="nodeDetailsVisible" title="参与者详情" width="500px">
       <div v-if="selectedNode !== null">
         <el-descriptions :column="1" border>
-          <el-descriptions-item label="Participant ID">{{ selectedNode }}</el-descriptions-item>
-          <el-descriptions-item label="Connection Status">
+          <el-descriptions-item label="参与者ID">{{ selectedNode }}</el-descriptions-item>
+          <el-descriptions-item label="连接状态">
             <el-tag :type="connectedNodes.includes(selectedNode) ? 'success' : 'danger'">
-              {{ connectedNodes.includes(selectedNode) ? 'Connected' : 'Disconnected' }}
+              {{ connectedNodes.includes(selectedNode) ? '已连接' : '未连接' }}
             </el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="Role">{{ selectedNode === 0 ? 'Proposer' : 'Validator' }}</el-descriptions-item>
-          <el-descriptions-item label="Message Count">{{ getNodeMessageCount(selectedNode) }}</el-descriptions-item>
+          <el-descriptions-item label="角色">{{ selectedNode === 0 ? '提议者' : '验证者' }}</el-descriptions-item>
+          <el-descriptions-item label="消息数量">{{ getNodeMessageCount(selectedNode) }}</el-descriptions-item>
         </el-descriptions>
         
         <div class="node-messages" style="margin-top: 20px;">
-          <h4>Messages from this participant</h4>
+          <h4>来自此参与者的消息</h4>
           <div v-for="msg in getNodeMessages(selectedNode)" :key="msg.id" class="message-item">
             <div class="message-header">
               <span>{{ getMessageTypeName(msg.type) }}</span>
               <span>{{ formatTime(msg.timestamp) }}</span>
             </div>
             <div class="message-content">
-              Content: {{ msg.value === -1 ? 'Reject' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.proposalContent || 'Option A') : (sessionConfig.proposalContent || 'Option B')) : 'None') }}
+              内容: {{ msg.value === -1 ? '拒绝' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.proposalContent || '选项A') : (sessionConfig.proposalContent || '选项B')) : '无') }}
             </div>
           </div>
         </div>
@@ -428,9 +343,15 @@ const sessionConfig = ref({
 const connectedNodes = ref([])
 const currentPhase = ref('pre-prepare')
 const phaseStep = ref(0)
+const currentRound = ref(1)
 const acceptedValue = ref(null)
 const receivedMessages = ref([])
-const consensusResult = ref(null)
+
+// Human node action choice
+const hasChosenAction = ref(false)
+const isNormalMode = ref(false)
+const waitingForNextRound = ref(true)  // 初始时等待下一轮共识
+const showAdvancedOptions = ref(false)  // 控制高级选项显示
 const nodeDetailsVisible = ref(false)
 const selectedNode = ref(null)
 
@@ -439,6 +360,7 @@ const topologyWidth = ref(500)
 const topologyHeight = ref(400)
 const topologyConnections = ref([])
 
+
 // Message sending form (custom message functionality removed)
 const messageForm = reactive({
   type: 'prepare',
@@ -446,22 +368,6 @@ const messageForm = reactive({
   target: 'all'
 })
 
-// Byzantine node attack control form
-const attackForm = reactive({
-  enabled: false,
-  intensity: 5,
-  byzantineStrategy: 'sometimes',
-  targetNodes: []
-})
-
-// Attack statistics
-const attackStats = reactive({
-  byzantineMessages: 0,
-  targetedMessages: 0
-})
-
-// Available target nodes list
-const availableTargetNodes = ref([])
 
 // Methods
 const connectToServer = () => {
@@ -474,12 +380,12 @@ const connectToServer = () => {
 
   socket.value.on('connect', () => {
     connectionStatus.value = 'connected'
-    ElMessage.success('Connected successfully')
+    ElMessage.success('连接成功')
   })
 
   socket.value.on('disconnect', () => {
     connectionStatus.value = 'disconnected'
-    ElMessage.warning('Connection disconnected')
+    ElMessage.warning('连接断开')
   })
 
   socket.value.on('session_config', (config) => {
@@ -502,7 +408,6 @@ const connectToServer = () => {
     acceptedValue.value = config.proposalValue
     console.log('Set acceptedValue:', acceptedValue.value)
     
-    updateAvailableTargetNodes()
     refreshTopology()
   })
 
@@ -526,6 +431,21 @@ const connectToServer = () => {
     phaseStep.value = data.step
     refreshTopology()
   })
+  
+  socket.value.on('new_round', (data) => {
+    console.log('进入新一轮共识:', data)
+    currentRound.value = data.round
+    currentPhase.value = data.phase
+    phaseStep.value = data.step
+    receivedMessages.value = []  // 清空消息列表
+    
+    // 重置操作选择
+    hasChosenAction.value = false
+    isNormalMode.value = false
+    waitingForNextRound.value = false  // 可以参与共识了
+    
+    ElMessage.info(`开始第${data.round}轮共识`)
+  })
 
   socket.value.on('message_received', (message) => {
     receivedMessages.value.unshift({
@@ -543,20 +463,39 @@ const connectToServer = () => {
   })
 
   socket.value.on('consensus_result', (result) => {
-    consensusResult.value = result
-    ElMessage.success('Consensus completed!')
+    console.log('收到共识结果:', result)
+    console.log('共识结果状态:', result.status)
+    console.log('共识结果描述:', result.description)
+    
+    // 根据共识结果显示不同的消息
+    if (result.status === '共识成功') {
+      console.log('显示成功消息')
+      ElMessage.success(`共识成功: ${result.description}`)
+    } else if (result.status === '共识失败') {
+      console.log('显示失败消息')
+      ElMessage.error(`共识失败: ${result.description}`)
+    } else if (result.status === '拒绝提议') {
+      console.log('显示拒绝消息')
+      ElMessage.warning(`拒绝提议: ${result.description}`)
+    } else if (result.status === '无诚实节点') {
+      console.log('显示无诚实节点消息')
+      ElMessage.error(`无诚实节点: ${result.description}`)
+    } else {
+      console.log('显示其他消息')
+      ElMessage.info(`共识结果: ${result.status} - ${result.description}`)
+    }
   })
 
   socket.value.on('error', (error) => {
-    ElMessage.error(`Error: ${error.message}`)
+    ElMessage.error(`错误: ${error.message}`)
   })
 }
 
 const leaveSession = async () => {
   try {
-    await ElMessageBox.confirm('Are you sure you want to leave the session?', 'Confirm', {
-      confirmButtonText: 'Confirm',
-      cancelButtonText: 'Cancel',
+    await ElMessageBox.confirm('确定要离开会话吗？', '确认', {
+      confirmButtonText: '确认',
+      cancelButtonText: '取消',
       type: 'warning'
     })
     
@@ -570,57 +509,82 @@ const leaveSession = async () => {
   }
 }
 
+const chooseNormalConsensus = () => {
+  hasChosenAction.value = true
+  isNormalMode.value = true
+  
+  // 通知后端，这个节点选择正常共识，由机器人代理
+  if (socket.value) {
+    socket.value.emit('choose_normal_consensus', {
+      sessionId,
+      nodeId
+    })
+  }
+  
+  ElMessage.success('已选择正常共识，机器人将代替您执行PBFT流程')
+}
+
+const chooseByzantineAttack = () => {
+  hasChosenAction.value = true
+  isNormalMode.value = false
+  
+  // 通知后端，这个节点选择拜占庭攻击模式
+  if (socket.value) {
+    socket.value.emit('choose_byzantine_attack', {
+      sessionId,
+      nodeId
+    })
+  }
+  
+  ElMessage.warning('已选择拜占庭攻击模式，您可以发送错误信息')
+}
+
+const sendErrorMessage = () => {
+  if (!hasChosenAction.value || isNormalMode.value) {
+    ElMessage.error('请先选择拜占庭攻击模式')
+    return
+  }
+  
+  if (socket.value) {
+    // 发送与当前共识值相反的错误信息
+    const errorValue = acceptedValue.value === 0 ? 1 : 0
+    const errorMessage = {
+      sessionId,
+      nodeId,
+      value: errorValue,
+      byzantine: true
+    }
+    
+    // 根据当前阶段发送相应的错误消息
+    if (currentPhase.value === 'prepare') {
+      socket.value.emit('send_prepare', errorMessage)
+    } else if (currentPhase.value === 'commit') {
+      socket.value.emit('send_commit', errorMessage)
+    }
+    
+    ElMessage.warning(`🦹 发送错误信息: ${errorValue}`)
+  }
+}
+
 const sendPrepare = () => {
   if (socket.value) {
-    const baseMessage = {
+    const message = {
       sessionId,
       nodeId,
       value: acceptedValue.value
     }
-
-    // Apply Byzantine attack strategy
-    if (isBadNode.value && attackForm.enabled) {
-      if (attackForm.byzantineStrategy === 'targeted') {
-        // Send different messages to different nodes
-        const messages = sendTargetedMessages(baseMessage)
-        messages.forEach(msg => {
-          socket.value.emit('send_prepare', msg)
-        })
-      } else {
-        // Apply normal attack strategy
-        const message = applyByzantineAttack(baseMessage, attackForm.intensity / 10)
-        socket.value.emit('send_prepare', message)
-      }
-    } else {
-      socket.value.emit('send_prepare', baseMessage)
-    }
+    socket.value.emit('send_prepare', message)
   }
 }
 
 const sendCommit = () => {
   if (socket.value) {
-    const baseMessage = {
+    const message = {
       sessionId,
       nodeId,
       value: acceptedValue.value
     }
-
-    // Apply Byzantine attack strategy
-    if (isBadNode.value && attackForm.enabled) {
-      if (attackForm.byzantineStrategy === 'targeted') {
-        // Send different messages to different nodes
-        const messages = sendTargetedMessages(baseMessage)
-        messages.forEach(msg => {
-          socket.value.emit('send_commit', msg)
-        })
-      } else {
-        // Apply normal attack strategy
-        const message = applyByzantineAttack(baseMessage, attackForm.intensity / 10)
-        socket.value.emit('send_commit', message)
-      }
-    } else {
-      socket.value.emit('send_commit', baseMessage)
-    }
+    socket.value.emit('send_commit', message)
   }
 }
 
@@ -636,20 +600,20 @@ const getPhaseStatus = () => {
 
 const getPhaseDisplayName = (phase) => {
   const names = {
-    'pre-prepare': 'Propose Phase',
-    'prepare': 'Prepare Phase',
-    'commit': 'Commit Phase',
-    'reply': 'Complete Phase'
+    'pre-prepare': '提议阶段',
+    'prepare': '准备阶段',
+    'commit': '提交阶段',
+    'reply': '完成阶段'
   }
   return names[phase] || phase
 }
 
 const getMessageTypeName = (type) => {
   const names = {
-    'pre-prepare': 'Propose',
-    'prepare': 'Prepare',
-    'commit': 'Commit',
-    'reply': 'Reply'
+    'pre-prepare': '提议',
+    'prepare': '准备',
+    'commit': '提交',
+    'reply': '回复'
   }
   return names[type] || type
 }
@@ -676,11 +640,11 @@ const getAcceptedContentDisplay = () => {
   // If acceptedValue is null, display undecided
   if (currentAcceptedValue === null) {
     console.log('Display undecided')
-    return 'Undecided'
+    return '未决定'
   }
   
   // Otherwise display default Option A/B
-  const result = currentAcceptedValue === 0 ? 'Option A' : 'Option B'
+  const result = currentAcceptedValue === 0 ? '选项A' : '选项B'
   console.log('Display default option:', result)
   return result
 }
@@ -692,9 +656,9 @@ const formatTime = (timestamp) => {
 const exportMessages = () => {
   const data = receivedMessages.value.map(msg => ({
     Time: formatTime(msg.timestamp),
-    Source: `Participant${msg.from}`,
-    Type: getMessageTypeName(msg.type),
-    Content: msg.value === -1 ? 'Reject' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.value.proposalContent || 'Option A') : (sessionConfig.value.proposalContent || 'Option B')) : 'None')
+    来源: `参与者${msg.from}`,
+    类型: getMessageTypeName(msg.type),
+    内容: msg.value === -1 ? '拒绝' : (msg.value !== null ? (msg.value === 0 ? (sessionConfig.value.proposalContent || '选项A') : (sessionConfig.value.proposalContent || '选项B')) : '无')
   }))
   
   const csv = [
@@ -710,12 +674,12 @@ const exportMessages = () => {
   a.click()
   window.URL.revokeObjectURL(url)
   
-  ElMessage.success('Messages exported')
+  ElMessage.success('消息已导出')
 }
 
 const clearMessages = () => {
   receivedMessages.value = []
-  ElMessage.success('Messages cleared')
+  ElMessage.success('消息已清除')
 }
 
 const refreshTopology = () => {
@@ -803,10 +767,10 @@ const showNodeDetails = (nodeId) => {
 
 const getTopologyName = (topology) => {
   const names = {
-    full: 'Full Connected',
-    ring: 'Ring',
-    star: 'Star',
-    tree: 'Tree'
+    full: '全连接',
+    ring: '环形',
+    star: '星形',
+    tree: '树形'
   }
   return names[topology] || topology
 }
@@ -815,16 +779,122 @@ const getActiveConnections = () => {
   return topologyConnections.value.filter(conn => conn.active).length
 }
 
-const getConsensusAlertType = (status) => {
-  if (status.includes('Success')) return 'success'
-  if (status.includes('Failed')) return 'error'
-  return 'info'
+// Consensus result display function
+const showConsensusResult = () => {
+  console.log('显示共识结果')
+  
+  // 根据当前阶段和状态模拟不同的共识结果
+  let result
+  
+  if (currentPhase.value === 'prepare') {
+    result = {
+      status: '准备阶段未完成',
+      description: '准备阶段需要更多节点参与',
+      stats: {
+        expected_nodes: sessionConfig.value.nodeCount,
+        expected_prepare_nodes: sessionConfig.value.nodeCount - 1,
+        total_messages: receivedMessages.value.length
+      }
+    }
+  } else if (currentPhase.value === 'commit') {
+    // 根据实际接收到的消息分析共识结果
+    const commitMessages = receivedMessages.value.filter(msg => msg.type === 'commit')
+    const correctMessages = commitMessages.filter(msg => msg.value === 0).length
+    const errorMessages = commitMessages.filter(msg => msg.value === 1).length
+    
+    // 计算故障节点数 f = floor((n-1)/3)
+    const n = sessionConfig.value.nodeCount
+    const f = Math.floor((n - 1) / 3)
+    const requiredCorrect = 2 * f + 1
+    const requiredError = f + 1
+    
+    console.log(`提交阶段分析 - 总节点数: ${n}, 故障节点数: ${f}`)
+    console.log(`提交阶段分析 - 正确消息: ${correctMessages}, 错误消息: ${errorMessages}`)
+    console.log(`提交阶段分析 - 需要正确消息: ${requiredCorrect}, 需要错误消息: ${requiredError}`)
+    
+    if (correctMessages >= requiredCorrect) {
+      result = {
+        status: '共识成功',
+        description: `收到${correctMessages}个正确消息（需要${requiredCorrect}个）`,
+        stats: {
+          expected_nodes: sessionConfig.value.nodeCount,
+          expected_prepare_nodes: sessionConfig.value.nodeCount - 1,
+          total_messages: receivedMessages.value.length
+        }
+      }
+    } else if (errorMessages >= requiredError) {
+      result = {
+        status: '共识失败',
+        description: `收到${errorMessages}个错误消息（需要${requiredError}个）`,
+        stats: {
+          expected_nodes: sessionConfig.value.nodeCount,
+          expected_prepare_nodes: sessionConfig.value.nodeCount - 1,
+          total_messages: receivedMessages.value.length
+        }
+      }
+    } else {
+      result = {
+        status: '提交阶段等待中',
+        description: `正确消息: ${correctMessages}, 错误消息: ${errorMessages}，等待更多消息`,
+        stats: {
+          expected_nodes: sessionConfig.value.nodeCount,
+          expected_prepare_nodes: sessionConfig.value.nodeCount - 1,
+          total_messages: receivedMessages.value.length
+        }
+      }
+    }
+  } else if (currentPhase.value === 'completed') {
+    result = {
+      status: '共识已完成',
+      description: '共识过程已经完成',
+      stats: {
+        expected_nodes: sessionConfig.value.nodeCount,
+        expected_prepare_nodes: sessionConfig.value.nodeCount - 1,
+        total_messages: receivedMessages.value.length
+      }
+    }
+  } else {
+    result = {
+      status: '提议阶段',
+      description: '正在等待提议',
+      stats: {
+        expected_nodes: sessionConfig.value.nodeCount,
+        expected_prepare_nodes: sessionConfig.value.nodeCount - 1,
+        total_messages: receivedMessages.value.length
+      }
+    }
+  }
+  
+  // 直接调用事件处理函数
+  console.log('收到共识结果:', result)
+  console.log('共识结果状态:', result.status)
+  console.log('共识结果描述:', result.description)
+  
+  // 根据共识结果显示不同的消息
+  if (result.status === '共识成功') {
+    console.log('显示成功消息')
+    ElMessage.success(`共识成功: ${result.description}`)
+  } else if (result.status === '共识失败') {
+    console.log('显示失败消息')
+    ElMessage.error(`共识失败: ${result.description}`)
+  } else if (result.status === '拒绝提议') {
+    console.log('显示拒绝消息')
+    ElMessage.warning(`拒绝提议: ${result.description}`)
+  } else if (result.status === '无诚实节点') {
+    console.log('显示无诚实节点消息')
+    ElMessage.error(`无诚实节点: ${result.description}`)
+  } else {
+    console.log('显示其他消息')
+    ElMessage.info(`共识结果: ${result.status} - ${result.description}`)
+  }
 }
 
+
+
 const isMyTurn = computed(() => {
-  // Proposer (node 0) doesn't send prepare messages, but can send commit messages
+  // Only non-proposer nodes (validators) should show validator quick actions
   if (nodeId === 0) {
-    return currentPhase.value === 'commit'  // Proposer can send commit messages
+    return false  // Proposer should not show validator quick actions
   }
   return currentPhase.value === 'prepare' || currentPhase.value === 'commit'
 })
@@ -834,135 +904,13 @@ const canProposerSendCustom = computed(() => {
   return nodeId === 0
 })
 
-// Determine if it's a Byzantine node (based on user choice)
-const isBadNode = computed(() => {
-  return attackForm.enabled
-})
 
 // Message sending related methods (custom message functionality removed)
 
-// Apply Byzantine attack strategy
-const applyByzantineAttack = (message, intensity) => {
-  if (!attackForm.enabled || Math.random() > intensity) return message
-
-  const strategy = attackForm.byzantineStrategy
-  let shouldAttack = false
-  let attackValue = null
-
-  switch (strategy) {
-    case 'always':
-      shouldAttack = true
-      attackValue = message.value === 0 ? 1 : 0
-      break
-    case 'sometimes':
-      shouldAttack = Math.random() < intensity
-      attackValue = message.value === 0 ? 1 : 0
-      break
-    case 'random':
-      shouldAttack = Math.random() < intensity
-      attackValue = Math.random() > 0.5 ? 1 : 0
-      break
-    case 'targeted':
-      // Logic for sending different values to different nodes is handled during sending
-      return message
-  }
-
-  if (shouldAttack) {
-    message.value = attackValue
-    message.byzantine = true
-    attackStats.byzantineMessages++
-    console.log(`🦹 Byzantine node ${nodeId} attack: sending incorrect value ${message.value}`)
-  }
-
-  return message
-}
-
-// Send different messages to specific nodes
-const sendTargetedMessages = (baseMessage) => {
-  if (!attackForm.enabled || attackForm.byzantineStrategy !== 'targeted') {
-    return [baseMessage]
-  }
-
-  const messages = []
-  const targetConfigs = attackForm.targetNodes.filter(target => target.nodeId !== null)
-
-  if (targetConfigs.length === 0) {
-    // If no target nodes configured, use default attack
-    const attackMessage = { ...baseMessage }
-    attackMessage.value = baseMessage.value === 0 ? 1 : 0
-    attackMessage.byzantine = true
-    attackStats.byzantineMessages++
-    messages.push(attackMessage)
-    return messages
-  }
-
-  // Create different messages for each target node
-  targetConfigs.forEach(target => {
-    const targetMessage = { ...baseMessage }
-    if (target.value !== null) {
-      targetMessage.value = target.value
-    } else {
-      // Random value
-      targetMessage.value = Math.random() > 0.5 ? 1 : 0
-    }
-    targetMessage.byzantine = true
-    targetMessage.targetNode = target.nodeId
-    attackStats.targetedMessages++
-    messages.push(targetMessage)
-  })
-
-  // Send original message to unconfigured nodes
-  const configuredNodes = targetConfigs.map(t => t.nodeId)
-  const allNodes = Array.from({ length: sessionConfig.value.nodeCount }, (_, i) => i)
-  const unconfiguredNodes = allNodes.filter(n => 
-    n !== nodeId && !configuredNodes.includes(n)
-  )
-
-  if (unconfiguredNodes.length > 0) {
-    const originalMessage = { ...baseMessage }
-    messages.push(originalMessage)
-  }
-
-  console.log(`🦹 Byzantine node ${nodeId} sending targeted messages:`, messages)
-  return messages
-}
-
-// Toggle attack mode
-const toggleAttackMode = () => {
-  if (attackForm.enabled) {
-    ElMessage.warning(`🦹 Participant ${nodeId} has chosen to become a Byzantine node`)
-  } else {
-    ElMessage.info(`🦹 Participant ${nodeId} has stopped Byzantine attacks`)
-  }
-}
-
-// Add target node
-const addTargetNode = () => {
-  attackForm.targetNodes.push({
-    nodeId: null,
-    value: null
-  })
-}
-
-// Remove target node
-const removeTargetNode = (index) => {
-  attackForm.targetNodes.splice(index, 1)
-}
-
-// Clear target node configuration
-const clearTargetNodes = () => {
-  attackForm.targetNodes = []
-}
-
-// Update available target nodes list
-const updateAvailableTargetNodes = () => {
-  availableTargetNodes.value = Array.from({ length: sessionConfig.value.nodeCount }, (_, i) => i)
-}
 
 // Lifecycle
 onMounted(() => {
   connectToServer()
-  updateAvailableTargetNodes()
 })
 
 onUnmounted(() => {
@@ -1060,10 +1008,38 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  align-items: stretch;
 }
 
 .quick-action-btn {
   width: 100%;
+  text-align: center;
+  justify-content: center;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 16px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+/* 确保两个按钮的尺寸完全一致 */
+.quick-actions-buttons .el-button {
+  height: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px !important;
+  border-radius: 6px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  padding: 0 16px !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
 }
 
 .proposer-info {
@@ -1111,6 +1087,14 @@ onUnmounted(() => {
   border-radius: 8px;
   background: linear-gradient(135deg, #fff5f5 0%, #fef0f0 100%);
   position: relative;
+}
+
+.simple-attack-control {
+  text-align: center;
+}
+
+.attack-tip {
+  margin-top: 10px;
 }
 
 .attack-control::before {
@@ -1319,6 +1303,7 @@ onUnmounted(() => {
   animation: pulse 2s infinite;
 }
 
+
 .node-number {
   font-size: 14px;
   font-weight: 600;
@@ -1351,39 +1336,6 @@ onUnmounted(() => {
   border: 1px solid white;
 }
 
-.consensus-result-section {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid #e4e7ed;
-}
-
-.consensus-stats {
-  margin-top: 15px;
-}
-
-.consensus-stat-item {
-  text-align: center;
-  padding: 15px;
-  background: #f8f9fa;
-  border-radius: 8px;
-}
-
-.consensus-stat-number {
-  font-size: 24px;
-  font-weight: 600;
-  color: #409eff;
-  margin-bottom: 5px;
-}
-
-.consensus-stat-label {
-  font-size: 12px;
-  color: #606266;
-}
-
-.consensus-no-result {
-  text-align: center;
-  padding: 40px 0;
-}
 
 .node-messages {
   max-height: 300px;
