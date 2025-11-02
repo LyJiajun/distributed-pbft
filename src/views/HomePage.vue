@@ -107,6 +107,10 @@
                   <el-button type="primary" @click="createSession" :loading="creating">
                     创建共识会话
                   </el-button>
+                  <el-button type="success" @click="showDemo" :loading="simulating">
+                    <el-icon style="margin-right: 5px;"><VideoPlay /></el-icon>
+                    动画演示共识过程
+                  </el-button>
                   <el-button @click="resetForm">重置</el-button>
                 </el-form-item>
               </el-form>
@@ -177,22 +181,108 @@
         </el-row>
       </el-main>
     </el-container>
+    
+    <!-- 动画演示对话框 -->
+    <el-dialog
+      v-model="demoDialogVisible"
+      title="PBFT共识过程动画演示"
+      width="90%"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="demo-container">
+        <!-- 控制栏 -->
+        <div class="round-selector">
+          <el-tag type="success" size="large">
+            真实会话消息历史
+          </el-tag>
+          <el-divider direction="vertical" v-if="simulationRounds.length > 1" />
+          <el-text size="large" v-if="simulationRounds.length > 1">选择轮次：</el-text>
+          <el-radio-group v-if="simulationRounds.length > 1" v-model="currentRound" @change="onRoundChange">
+            <el-radio-button 
+              v-for="round in simulationRounds" 
+              :key="round.id" 
+              :label="round.id"
+            >
+              第 {{ round.id }} 轮
+            </el-radio-button>
+          </el-radio-group>
+          <el-text type="info" size="small" v-else style="margin-left: 10px;">
+            当前仅有 1 轮共识
+          </el-text>
+          <el-button 
+            type="primary" 
+            @click="playAnimation" 
+            :disabled="!currentSimulation"
+            style="margin-left: auto;"
+          >
+            <el-icon><VideoPlay /></el-icon>
+            重新播放动画
+          </el-button>
+        </div>
+        
+        <!-- 拓扑图和动画 -->
+        <div class="demo-content">
+          <div class="topology-section">
+            <h3>网络拓扑与消息传递动画</h3>
+            <Topology
+              v-if="currentSimulation"
+              ref="topologyRef"
+              :topologyType="formData.topology"
+              :nodeCount="formData.nodeCount"
+              :byzantineNodes="formData.faultyNodes"
+              :simulationResult="currentSimulation"
+              :proposalValue="formData.proposalValue"
+            />
+          </div>
+          
+          <div class="table-section">
+            <h3>消息详情表</h3>
+            <PBFTTable
+              v-if="currentSimulation"
+              :filteredSimulationResult="currentSimulation"
+              :nodeCount="formData.nodeCount"
+            />
+          </div>
+        </div>
+      </div>
+      
+      <template #footer>
+        <el-button @click="demoDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
+import { VideoPlay } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import axios from 'axios'
+import Topology from '@/components/Topology.vue'
+import PBFTTable from '@/components/PBFTTable.vue'
 
 export default {
   name: 'HomePage',
+  components: {
+    VideoPlay,
+    Topology,
+    PBFTTable
+  },
   setup() {
     const formRef = ref(null)
     const qrContainer = ref(null)
     const creating = ref(false)
     const sessionInfo = ref(null)
+    
+    // 演示相关
+    const demoDialogVisible = ref(false)
+    const simulating = ref(false)
+    const simulationRounds = ref([])
+    const currentRound = ref(1)
+    const currentSimulation = ref(null)
+    const topologyRef = ref(null)
     
     const formData = reactive({
       nodeCount: 6,
@@ -251,17 +341,7 @@ export default {
         await formRef.value.validate()
         creating.value = true
         
-        // 如果已有会话，先废弃之前的会话
-        if (sessionInfo.value) {
-          try {
-            await axios.delete(`/api/sessions/${sessionInfo.value.sessionId}`)
-            console.log('已废弃之前的会话:', sessionInfo.value.sessionId)
-          } catch (error) {
-            console.warn('废弃之前会话失败:', error)
-          }
-        }
-        
-      const response = await axios.post('/api/sessions', {
+        const response = await axios.post('/api/sessions', {
         nodeCount: formData.nodeCount,
         faultyNodes: formData.faultyNodes,
         robotNodes: formData.nodeCount - formData.faultyNodes, // 自动计算机器人节点数
@@ -405,6 +485,77 @@ export default {
       }
     })
     
+    // 演示相关方法
+    const showDemo = async () => {
+      try {
+        simulating.value = true
+        
+        // 检查是否已创建会话
+        if (!sessionInfo.value) {
+          ElMessage.error('请先创建共识会话！')
+          return
+        }
+        
+        simulationRounds.value = []
+        
+        // 1. 先获取轮次列表
+        const roundsResponse = await axios.get(`/api/sessions/${sessionInfo.value.sessionId}/history`)
+        const rounds = roundsResponse.data.rounds || [1]
+        
+        console.log('可用的轮次:', rounds)
+        
+        // 2. 获取所有轮次的数据
+        for (const roundNum of rounds) {
+          const response = await axios.get(`/api/sessions/${sessionInfo.value.sessionId}/history?round=${roundNum}`)
+          simulationRounds.value.push({
+            id: roundNum,
+            data: response.data,
+            isReal: true
+          })
+        }
+        
+        // 默认显示第一轮
+        currentRound.value = rounds[0]
+        currentSimulation.value = simulationRounds.value[0].data
+        
+        // 打开对话框
+        demoDialogVisible.value = true
+        
+        // 等待DOM更新后播放动画
+        await nextTick()
+        await new Promise(resolve => setTimeout(resolve, 300))
+        playAnimation()
+        
+        ElMessage.success(`已加载 ${rounds.length} 轮共识历史`)
+      } catch (error) {
+        console.error('Failed to get session history:', error)
+        if (error.response && error.response.status === 404) {
+          ElMessage.error('会话不存在或已过期，请重新创建会话')
+        } else {
+          ElMessage.error('获取会话历史失败，请稍后重试')
+        }
+      } finally {
+        simulating.value = false
+      }
+    }
+    
+    const onRoundChange = (roundId) => {
+      const round = simulationRounds.value.find(r => r.id === roundId)
+      if (round) {
+        currentSimulation.value = round.data
+        // 自动播放新轮次的动画
+        nextTick(() => {
+          playAnimation()
+        })
+      }
+    }
+    
+    const playAnimation = () => {
+      if (topologyRef.value && topologyRef.value.startAnimation) {
+        topologyRef.value.startAnimation()
+      }
+    }
+    
     return {
       formRef,
       qrContainer,
@@ -416,7 +567,17 @@ export default {
       getTopologyName,
       createSession,
       copyLink,
-      resetForm
+      resetForm,
+      // 演示相关
+      demoDialogVisible,
+      simulating,
+      simulationRounds,
+      currentRound,
+      currentSimulation,
+      topologyRef,
+      showDemo,
+      onRoundChange,
+      playAnimation
     }
   }
 }
@@ -528,5 +689,48 @@ export default {
 .welcome-content p {
   margin: 10px 0;
   line-height: 1.6;
+}
+
+/* 演示对话框样式 */
+.demo-container {
+  padding: 20px;
+}
+
+.round-selector {
+  margin-bottom: 30px;
+  padding: 20px;
+  background: #f5f7fa;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.demo-content {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.topology-section,
+.table-section {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.topology-section h3,
+.table-section h3 {
+  margin: 0 0 20px 0;
+  color: #2c3e50;
+  font-size: 1.3rem;
+  text-align: center;
+}
+
+.topology-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 </style> 

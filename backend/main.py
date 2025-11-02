@@ -257,6 +257,155 @@ async def get_connected_nodes(session_id: str):
         "totalNodes": session["config"]["nodeCount"]
     }
 
+@app.get("/api/sessions/{session_id}/history")
+async def get_session_history(session_id: str, round: Optional[int] = None):
+    """获取会话的真实消息历史，用于动画演示
+    
+    参数:
+        round: 指定轮次，如果不指定则返回所有轮次信息
+    """
+    print(f"\n=== 获取会话历史 ===")
+    print(f"请求的会话ID: {session_id}, 轮次: {round if round else '所有'}")
+    print(f"当前所有会话ID: {list(sessions.keys())}")
+    
+    session = get_session(session_id)
+    if not session:
+        print(f"错误: 会话 {session_id} 不存在")
+        raise HTTPException(status_code=404, detail="会话不存在")
+    
+    config = session["config"]
+    messages = session["messages"]
+    n = config["nodeCount"]
+    topology = config["topology"]
+    n_value = config.get("branchCount", 2)
+    
+    # 如果没有指定轮次，返回轮次列表和当前轮次
+    if round is None:
+        # 获取所有轮次
+        all_rounds = set()
+        for msg_list in [messages.get("pre_prepare", []), messages.get("prepare", []), messages.get("commit", [])]:
+            for msg in msg_list:
+                if "round" in msg:
+                    all_rounds.add(msg["round"])
+        
+        rounds_list = sorted(list(all_rounds))
+        current_round = session.get("current_round", 1)
+        
+        print(f"会话共有 {len(rounds_list)} 轮: {rounds_list}, 当前轮次: {current_round}")
+        
+        return {
+            "rounds": rounds_list,
+            "currentRound": current_round,
+            "totalRounds": len(rounds_list)
+        }
+    
+    # 指定了轮次，返回该轮次的消息
+    print(f"获取第 {round} 轮消息")
+    
+    def filter_by_round(msg_list, target_round):
+        """按轮次过滤消息"""
+        return [msg for msg in msg_list if msg.get("round", 1) == target_round]
+    
+    # 按轮次过滤消息
+    round_pre_prepare = filter_by_round(messages.get("pre_prepare", []), round)
+    round_prepare = filter_by_round(messages.get("prepare", []), round)
+    round_commit = filter_by_round(messages.get("commit", []), round)
+    
+    print(f"第 {round} 轮消息数量: pre_prepare={len(round_pre_prepare)}, "
+          f"prepare={len(round_prepare)}, commit={len(round_commit)}")
+    
+    # 转换消息格式以适配动画组件
+    # Pre-prepare消息 - 展开广播为点对点消息
+    pre_prepare_messages = []
+    for msg in round_pre_prepare:
+        src = msg["from"]
+        value = msg.get("value", config["proposalValue"])
+        # 如果是广播消息，展开为多个点对点消息
+        if msg.get("to") == "all":
+            for dst in range(n):
+                if dst != src and is_connection_allowed(src, dst, n, topology, n_value):
+                    pre_prepare_messages.append({
+                        "src": src,
+                        "dst": dst,
+                        "value": value,
+                        "type": "pre_prepare"
+                    })
+        else:
+            pre_prepare_messages.append({
+                "src": src,
+                "dst": msg.get("to", None),
+                "value": value,
+                "type": "pre_prepare"
+            })
+    
+    # Prepare消息 - 展开广播为点对点消息
+    prepare_messages = []
+    for msg in round_prepare:
+        src = msg["from"]
+        value = msg.get("value", config["proposalValue"])
+        # 如果是广播消息，展开为多个点对点消息
+        if msg.get("to") == "all":
+            for dst in range(n):
+                if dst != src and is_connection_allowed(src, dst, n, topology, n_value):
+                    prepare_messages.append({
+                        "src": src,
+                        "dst": dst,
+                        "value": value,
+                        "type": "prepare"
+                    })
+        else:
+            prepare_messages.append({
+                "src": src,
+                "dst": msg.get("to", None),
+                "value": value,
+                "type": "prepare"
+            })
+    
+    # Commit消息 - 展开广播为点对点消息
+    commit_messages = []
+    for msg in round_commit:
+        src = msg["from"]
+        value = msg.get("value", config["proposalValue"])
+        # 如果是广播消息，展开为多个点对点消息
+        if msg.get("to") == "all":
+            for dst in range(n):
+                if dst != src and is_connection_allowed(src, dst, n, topology, n_value):
+                    commit_messages.append({
+                        "src": src,
+                        "dst": dst,
+                        "value": value,
+                        "type": "commit"
+                    })
+        else:
+            commit_messages.append({
+                "src": src,
+                "dst": msg.get("to", None),
+                "value": value,
+                "type": "commit"
+            })
+    
+    # 获取该轮的共识结果
+    round_consensus = None
+    for history in session.get("consensus_history", []):
+        if history.get("round") == round:
+            round_consensus = f"{history.get('status', '未知')}: {history.get('description', '')}"
+            break
+    
+    if not round_consensus:
+        round_consensus = "共识进行中..." if round == session.get("current_round") else "无结果"
+    
+    return {
+        "round": round,
+        "pre_prepare": pre_prepare_messages,
+        "prepare": [prepare_messages],
+        "commit": [commit_messages],
+        "consensus": round_consensus,
+        "messages": pre_prepare_messages + prepare_messages + commit_messages,
+        "nodeCount": config["nodeCount"],
+        "topology": config["topology"],
+        "proposalValue": config["proposalValue"]
+    }
+
 # Socket.IO事件处理
 @sio.event
 async def connect(sid, environ, auth):
@@ -353,6 +502,7 @@ async def send_prepare(sid, data):
         "type": "prepare",
         "value": value,
         "phase": "prepare",
+        "round": session["current_round"],  # 添加轮次信息
         "timestamp": datetime.now().isoformat(),
         "tampered": False,
         "byzantine": data.get("byzantine", False)  # 标记是否为拜占庭攻击消息
@@ -388,6 +538,7 @@ async def send_commit(sid, data):
         "type": "commit",
         "value": value,
         "phase": "commit",
+        "round": session["current_round"],  # 添加轮次信息
         "timestamp": datetime.now().isoformat(),
         "tampered": False,
         "byzantine": data.get("byzantine", False)  # 标记是否为拜占庭攻击消息
@@ -488,9 +639,13 @@ async def choose_normal_consensus(sid, data):
     
     if session["phase"] == "prepare" and node_id != 0:
         # 在准备阶段且不是主节点，发送准备消息
+        # 标记为即将发送，防止robot_send_prepare_messages重复发送
+        session["robot_node_states"][node_id]["sent_prepare"] = True
         asyncio.create_task(schedule_robot_prepare(session_id, node_id, config["proposalValue"]))
     elif session["phase"] == "commit":
         # 在提交阶段，发送提交消息
+        # 标记为即将发送，防止robot_send_commit_messages重复发送
+        session["robot_node_states"][node_id]["sent_commit"] = True
         asyncio.create_task(schedule_robot_commit(session_id, node_id, config["proposalValue"]))
 
 async def schedule_robot_prepare(session_id: str, robot_id: int, value: int):
@@ -558,47 +713,26 @@ async def check_and_start_consensus(session_id: str):
         await start_consensus(session_id)
 
 async def start_consensus(session_id: str):
-    """开始共识过程"""
+    """开始共识过程 - 仅用于第一轮共识的初始化"""
     session = get_session(session_id)
     if not session:
         return
     
     session["status"] = "running"
-    session["phase"] = "pre_prepare"
+    session["phase"] = "pre-prepare"
     session["phase_step"] = 0
     
-    config = session["config"]
+    print(f"会话 {session_id} 开始PBFT共识流程")
     
-    # 发送预准备消息
-    pre_prepare_message = {
-        "from": 0,  # 提议者
-        "to": "all",
-        "type": "pre_prepare",
-        "value": config["proposalValue"],
-        "phase": "pre_prepare",
-        "timestamp": datetime.now().isoformat(),
-        "tampered": config["maliciousProposer"] and random.random() < 0.5
-    }
-    
-    session["messages"]["pre_prepare"].append(pre_prepare_message)
-    
-    # 根据消息传达概率决定是否广播预准备消息
-    if should_deliver_message(session_id):
-        await sio.emit('message_received', pre_prepare_message, room=session_id)
-        print(f"提议者的预准备消息已发送 (传达概率: {config.get('messageDeliveryRate', 100)}%)")
-    else:
-        print(f"提议者的预准备消息被丢弃 (传达概率: {config.get('messageDeliveryRate', 100)}%)")
-    
-    # 更新阶段
+    # 通知所有节点进入预准备阶段
     await sio.emit('phase_update', {
-        "phase": "pre_prepare",
+        "phase": "pre-prepare",
         "step": 0,
         "isMyTurn": False
     }, room=session_id)
     
-    # 延迟后进入准备阶段
-    await asyncio.sleep(3)
-    await start_prepare_phase(session_id)
+    # 提议者发送预准备消息（统一使用robot_send_pre_prepare）
+    await robot_send_pre_prepare(session_id)
 
 async def start_prepare_phase(session_id: str):
     """开始准备阶段"""
@@ -815,12 +949,9 @@ async def start_next_round(session_id: str):
     session["phase_step"] = 0
     session["consensus_result"] = None
     
-    # 清空消息
-    session["messages"] = {
-        "pre_prepare": [],
-        "prepare": [],
-        "commit": []
-    }
+    # 不再清空消息，保留历史轮次的消息
+    # 所有消息通过 round 字段区分不同轮次
+    # session["messages"] 保持累积，不清空
     
     # 将临时机器人节点移回人类节点列表
     config = session["config"]
@@ -979,6 +1110,7 @@ async def robot_send_pre_prepare(session_id: str):
         "type": "pre_prepare",
         "value": config["proposalValue"],
         "phase": "pre-prepare",
+        "round": session["current_round"],  # 添加轮次信息
         "timestamp": datetime.now().isoformat(),
         "tampered": False,
         "isRobot": True
@@ -1063,6 +1195,7 @@ async def handle_robot_prepare(session_id: str, robot_id: int, value: int):
         "type": "prepare",
         "value": value,
         "phase": "prepare",
+        "round": session["current_round"],  # 添加轮次信息
         "timestamp": datetime.now().isoformat(),
         "tampered": False,
         "isRobot": True
@@ -1146,6 +1279,7 @@ async def handle_robot_commit(session_id: str, robot_id: int, value: int):
         "type": "commit",
         "value": value,
         "phase": "commit",
+        "round": session["current_round"],  # 添加轮次信息
         "timestamp": datetime.now().isoformat(),
         "tampered": False,
         "isRobot": True
