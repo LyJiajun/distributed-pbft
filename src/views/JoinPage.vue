@@ -74,23 +74,54 @@
                 </div>
               </div>
               
-              <div class="join-actions">
-                <el-button 
-                  type="primary" 
-                  size="large" 
+              <div class="join-actions flex flex-col gap-3">
+                <!-- 自动分配并加入按钮 -->
+                <button
                   @click="autoAssignAndJoin"
-                  :loading="joining"
-                  :disabled="sessionInfo.nodeCount === connectedNodes.length"
+                  :disabled="joining || sessionInfo.nodeCount === connectedNodes.length"
+                  class="w-full bg-blue-100 dark:bg-blue-900 border-l-4 border-blue-500 dark:border-blue-700 text-blue-900 dark:text-blue-100 p-4 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-blue-200 dark:hover:bg-blue-800 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                 >
-                  {{ sessionInfo.nodeCount === connectedNodes.length ? '所有节点已占用' : '自动分配并加入' }}
-                </el-button>
+                  <svg
+                    v-if="!joining"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    class="h-6 w-6 flex-shrink-0 mr-2 text-blue-600"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
+                      stroke-width="2"
+                      stroke-linejoin="round"
+                      stroke-linecap="round"
+                    ></path>
+                  </svg>
+                  <span class="text-base font-semibold">
+                    {{ joining ? '加入中...' : (sessionInfo.nodeCount === connectedNodes.length ? '所有节点已占用' : '自动分配并加入') }}
+                  </span>
+                </button>
                 
-                <el-button 
-                  size="large" 
+                <!-- 返回按钮 -->
+                <button
                   @click="goBack"
+                  class="w-full bg-gray-100 dark:bg-gray-700 border-l-4 border-gray-500 dark:border-gray-600 text-gray-900 dark:text-gray-100 p-4 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-gray-200 dark:hover:bg-gray-600 transform hover:scale-105"
                 >
-                  返回
-                </el-button>
+                  <svg
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    class="h-6 w-6 flex-shrink-0 mr-2 text-gray-600"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                      stroke-width="2"
+                      stroke-linejoin="round"
+                      stroke-linecap="round"
+                    ></path>
+                  </svg>
+                  <span class="text-base font-semibold">返回</span>
+                </button>
               </div>
             </div>
           </div>
@@ -238,28 +269,29 @@ export default {
 <style scoped>
 .join-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #d1d5db 0%, #e5e7eb 100%);
 }
 
 .header {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  color: white;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  color: #1f2937;
   text-align: center;
-  padding: 20px;
+  padding: 30px 20px;
+  height: auto !important;
 }
 
 .header h1 {
   margin: 0;
   font-size: 2.5rem;
   font-weight: 300;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  text-shadow: none;
 }
 
 .header p {
   margin: 10px 0 0 0;
-  opacity: 0.9;
+  opacity: 0.8;
   font-size: 1.1rem;
 }
 

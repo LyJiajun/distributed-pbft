@@ -1,37 +1,48 @@
 <template>
   <div class="node-page">
     <el-container>
-      <el-header class="header">
-        <div class="header-content">
-          <div class="node-info">
-            <h2>参与者 {{ nodeId }}</h2>
-            <el-tag :type="connectionStatus === 'connected' ? 'success' : 'danger'">
-              {{ connectionStatus === 'connected' ? '已连接' : '未连接' }}
-            </el-tag>
-            <el-tag type="danger" effect="dark">🦹 拜占庭节点（人类玩家）</el-tag>
-          </div>
-          <div class="session-info">
-            <span>会话: {{ sessionId }}</span>
-            <el-tag type="primary">第{{ currentRound }}轮</el-tag>
-            <el-button size="small" @click="leaveSession" type="danger">离开会话</el-button>
-          </div>
-        </div>
-      </el-header>
-      
       <el-main class="main-content">
+        <!-- Session Info Card Row -->
+        <el-row :gutter="20" style="margin-bottom: 20px;">
+          <el-col :span="6">
+            <div class="session-info-card">
+              <div class="info-section">
+                <h2>参与者 {{ nodeId }}</h2>
+                <div class="tags-group">
+                  <el-tag :type="connectionStatus === 'connected' ? 'success' : 'danger'" size="small">
+                    {{ connectionStatus === 'connected' ? '已连接' : '未连接' }}
+                  </el-tag>
+                  <el-tag type="danger" effect="dark" size="small">🦹 拜占庭节点（人类玩家）</el-tag>
+                </div>
+              </div>
+              <div class="info-section">
+                <div class="session-details">
+                  <span class="session-id">会话: {{ sessionId }}</span>
+                </div>
+                <el-button 
+                  size="small" 
+                  @click="leaveSession" 
+                  type="danger" 
+                  style="width: 100%; margin-top: 8px; background-color: #ef4444 !important; border-color: #ef4444 !important; color: white !important;"
+                >
+                  离开会话
+                </el-button>
+              </div>
+            </div>
+          </el-col>
+        </el-row>
+        
         <el-row :gutter="20">
           <!-- Left: Consensus Progress -->
           <el-col :span="6">
             <!-- Advanced Options Toggle -->
             <div style="margin-bottom: 15px;">
-              <el-button 
-                @click="showAdvancedOptions = !showAdvancedOptions" 
-                :type="showAdvancedOptions ? 'primary' : 'info'"
-                size="default"
-                style="width: 100%;"
+              <button
+                @click="showAdvancedOptions = !showAdvancedOptions"
+                class="advanced-options-toggle"
               >
                 {{ showAdvancedOptions ? '隐藏高级选项' : '显示高级选项' }}
-              </el-button>
+              </button>
             </div>
             
             <el-card class="progress-card">
@@ -87,25 +98,56 @@
                   
                   <!-- 可以选择操作 -->
                   <div v-else>
-                    <div class="action-buttons" style="display: flex; flex-direction: column; align-items: stretch;">
-                      <el-button 
-                        type="success" 
-                        @click="chooseNormalConsensus" 
+                    <div class="action-buttons" style="display: flex; flex-direction: column; align-items: stretch; gap: 12px;">
+                      <!-- 正常共识按钮 -->
+                      <button
+                        @click="chooseNormalConsensus"
                         :disabled="hasChosenAction"
-                        size="default"
-                        style="width: 100%; margin-bottom: 15px; padding: 8px 20px; border-width: 1px; box-sizing: border-box;"
+                        class="bg-green-100 dark:bg-green-900 border-l-4 border-green-500 dark:border-green-700 text-green-900 dark:text-green-100 p-3 rounded-lg flex items-center transition duration-300 ease-in-out hover:bg-green-200 dark:hover:bg-green-800 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                       >
-                        {{ hasChosenAction && isNormalMode ? '✓ 已选择正常共识（机器人代理）' : '正常共识' }}
-                      </el-button>
-                      <el-button 
-                        type="danger" 
-                        @click="chooseByzantineAttack" 
+                        <svg
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          class="h-5 w-5 flex-shrink-0 mr-2 text-green-600"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          <path
+                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                            stroke-width="2"
+                            stroke-linejoin="round"
+                            stroke-linecap="round"
+                          ></path>
+                        </svg>
+                        <span class="text-sm font-semibold flex-1 text-left">
+                          {{ hasChosenAction && isNormalMode ? '✓ 已选择正常共识（机器人代理）' : '正常共识' }}
+                        </span>
+                      </button>
+                      
+                      <!-- 拜占庭攻击按钮 -->
+                      <button
+                        @click="chooseByzantineAttack"
                         :disabled="hasChosenAction"
-                        size="default"
-                        style="width: 100%; padding: 8px 20px; border-width: 1px; box-sizing: border-box;"
+                        class="bg-red-100 dark:bg-red-900 border-l-4 border-red-500 dark:border-red-700 text-red-900 dark:text-red-100 p-3 rounded-lg flex items-center transition duration-300 ease-in-out hover:bg-red-200 dark:hover:bg-red-800 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                       >
-                        {{ hasChosenAction && !isNormalMode ? '✓ 已选择拜占庭攻击' : '拜占庭攻击' }}
-                      </el-button>
+                        <svg
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          class="h-5 w-5 flex-shrink-0 mr-2 text-red-600"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          <path
+                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                            stroke-width="2"
+                            stroke-linejoin="round"
+                            stroke-linecap="round"
+                          ></path>
+                        </svg>
+                        <span class="text-sm font-semibold flex-1 text-left">
+                          {{ hasChosenAction && !isNormalMode ? '✓ 已选择拜占庭攻击' : '拜占庭攻击' }}
+                        </span>
+                      </button>
                     </div>
                     <div class="action-tip" style="margin-top: 10px;">
                       <el-alert
@@ -141,31 +183,168 @@
                     <span style="color: #f56c6c; font-weight: bold;">🦹 拜占庭攻击操作</span>
                   </el-divider>
                   
-                  <div class="simple-attack-control">
-                    <el-button 
-                      type="danger" 
-                      @click="sendErrorMessage" 
-                      style="width: 100%"
-                      size="large"
+                  <div class="simple-attack-control space-y-3">
+                    <!-- 发送错误信息按钮 -->
+                    <button
+                      @click="sendErrorMessage"
+                      class="w-full bg-red-100 dark:bg-red-900 border-l-4 border-red-500 dark:border-red-700 text-red-900 dark:text-red-100 p-3 rounded-lg flex items-center transition duration-300 ease-in-out hover:bg-red-200 dark:hover:bg-red-800 transform hover:scale-105"
                     >
-                      发送错误信息
-                    </el-button>
-                    <div class="attack-tip" style="margin-top: 10px;">
-                      <el-tag type="info" size="small">点击按钮发送与当前共识值相反的错误信息</el-tag>
+                      <svg
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        class="h-5 w-5 flex-shrink-0 mr-2 text-red-600"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          d="M6 18L18 6M6 6l12 12"
+                          stroke-width="2"
+                          stroke-linejoin="round"
+                          stroke-linecap="round"
+                        ></path>
+                      </svg>
+                      <span class="text-sm font-semibold">发送错误信息</span>
+                    </button>
+                    
+                    <!-- 差异化消息按钮 -->
+                    <button
+                      @click="sendRandomDifferentialMessage"
+                      class="w-full bg-yellow-100 dark:bg-yellow-900 border-l-4 border-yellow-500 dark:border-yellow-700 text-yellow-900 dark:text-yellow-100 p-3 rounded-lg flex items-center transition duration-300 ease-in-out hover:bg-yellow-200 dark:hover:bg-yellow-800 transform hover:scale-105"
+                    >
+                      <svg
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        class="h-5 w-5 flex-shrink-0 mr-2 text-yellow-600"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          d="M13 10V3L4 14h7v7l9-11h-7z"
+                          stroke-width="2"
+                          stroke-linejoin="round"
+                          stroke-linecap="round"
+                        ></path>
+                      </svg>
+                      <span class="text-sm font-semibold">🎲 发送差异化消息（随机）</span>
+                    </button>
+                  </div>
+                  
+                  <!-- 消息可靠性控制 -->
+                  <el-divider content-position="left" style="margin-top: 20px;">
+                    <span style="color: #409eff; font-weight: bold;">📡 消息可靠性控制</span>
+                  </el-divider>
+                  
+                  <div class="reliability-control">
+                    <button
+                      @click="showReliabilityMatrix = !showReliabilityMatrix"
+                      class="w-full mb-3 bg-blue-100 dark:bg-blue-900 border-l-4 border-blue-500 dark:border-blue-700 text-blue-900 dark:text-blue-100 p-3 rounded-lg flex items-center transition duration-300 ease-in-out hover:bg-blue-200 dark:hover:bg-blue-800 transform hover:scale-105"
+                    >
+                      <svg
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        class="h-5 w-5 flex-shrink-0 mr-2 text-blue-600"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          d="M13 16h-1v-4h1m0-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                          stroke-width="2"
+                          stroke-linejoin="round"
+                          stroke-linecap="round"
+                        ></path>
+                      </svg>
+                      <span class="text-sm font-semibold">
+                        {{ showReliabilityMatrix ? '隐藏可靠性矩阵' : '显示可靠性矩阵' }}
+                      </span>
+                    </button>
+                    
+                    <div v-if="showReliabilityMatrix" class="reliability-matrix">
+                      <div class="quick-set mb-4">
+                        <div class="text-xs text-gray-600 dark:text-gray-400 mb-2 font-medium">快速设置：</div>
+                        <div class="grid grid-cols-4 gap-2">
+                          <button
+                            @click="setAllReliability(100)"
+                            class="bg-green-100 dark:bg-green-900 border-l-2 border-green-500 dark:border-green-700 text-green-900 dark:text-green-100 px-3 py-2 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-green-200 dark:hover:bg-green-800 transform hover:scale-105"
+                          >
+                            <span class="text-xs font-semibold">100%</span>
+                          </button>
+                          <button
+                            @click="setAllReliability(75)"
+                            class="bg-blue-100 dark:bg-blue-900 border-l-2 border-blue-500 dark:border-blue-700 text-blue-900 dark:text-blue-100 px-3 py-2 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-blue-200 dark:hover:bg-blue-800 transform hover:scale-105"
+                          >
+                            <span class="text-xs font-semibold">75%</span>
+                          </button>
+                          <button
+                            @click="setAllReliability(50)"
+                            class="bg-yellow-100 dark:bg-yellow-900 border-l-2 border-yellow-500 dark:border-yellow-700 text-yellow-900 dark:text-yellow-100 px-3 py-2 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-yellow-200 dark:hover:bg-yellow-800 transform hover:scale-105"
+                          >
+                            <span class="text-xs font-semibold">50%</span>
+                          </button>
+                          <button
+                            @click="setAllReliability(0)"
+                            class="bg-red-100 dark:bg-red-900 border-l-2 border-red-500 dark:border-red-700 text-red-900 dark:text-red-100 px-3 py-2 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-red-200 dark:hover:bg-red-800 transform hover:scale-105"
+                          >
+                            <span class="text-xs font-semibold">0%</span>
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div class="reliability-items">
+                        <div 
+                          v-for="targetNode in Object.keys(reliabilityConfig)" 
+                          :key="targetNode"
+                          class="reliability-item"
+                        >
+                          <div class="reliability-label">
+                            <span>→ 节点{{ targetNode }}</span>
+                            <span class="reliability-value">{{ reliabilityConfig[targetNode] }}%</span>
+                          </div>
+                          <el-slider 
+                            v-model="reliabilityConfig[targetNode]" 
+                            :min="0" 
+                            :max="100" 
+                            :step="5"
+                            @change="updateReliability(targetNode, reliabilityConfig[targetNode])"
+                            :show-tooltip="true"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div class="reliability-tip" style="margin-top: 10px;">
+                        <el-alert
+                          title="提示"
+                          description="调整滑块可以设置发送给每个节点的消息到达概率。0%表示消息不会到达该节点，100%表示消息一定到达。"
+                          type="info"
+                          :closable="false"
+                          show-icon
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
                 
                 <!-- Consensus Result Display -->
                 <div class="consensus-result-control" style="margin-top: 20px; border-top: 1px solid #e4e7ed; padding-top: 15px;">
-                  <el-button 
-                    type="primary" 
-                    @click="showConsensusResult" 
-                    size="large"
-                    style="width: 100%"
+                  <button
+                    @click="showConsensusResult"
+                    class="w-full bg-blue-100 dark:bg-blue-900 border-l-4 border-blue-500 dark:border-blue-700 text-blue-900 dark:text-blue-100 p-3 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-blue-200 dark:hover:bg-blue-800 transform hover:scale-105"
                   >
-                    显示共识结果
-                  </el-button>
+                    <svg
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      class="h-5 w-5 flex-shrink-0 mr-2 text-blue-600"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                        stroke-width="2"
+                        stroke-linejoin="round"
+                        stroke-linecap="round"
+                      ></path>
+                    </svg>
+                    <span class="text-sm font-semibold">显示共识结果</span>
+                  </button>
                 </div>
               </div>
             </el-card>
@@ -355,6 +534,14 @@ const showAdvancedOptions = ref(false)  // 控制高级选项显示
 const nodeDetailsVisible = ref(false)
 const selectedNode = ref(null)
 
+// 消息可靠性配置
+const reliabilityConfig = ref({})  // {targetNodeId: percentage}
+const showReliabilityMatrix = ref(false)
+
+// 差异化消息配置
+const differentialMessageConfig = ref({})  // {targetNodeId: value (0 or 1)}
+const showDifferentialMatrix = ref(false)
+
 // Topology related
 const topologyWidth = ref(500)
 const topologyHeight = ref(400)
@@ -407,6 +594,9 @@ const connectToServer = () => {
     // Set accepted value to proposal value
     acceptedValue.value = config.proposalValue
     console.log('Set acceptedValue:', acceptedValue.value)
+    
+    // 初始化可靠性配置（默认100%）
+    initializeReliabilityConfig()
     
     refreshTopology()
   })
@@ -779,6 +969,214 @@ const getActiveConnections = () => {
   return topologyConnections.value.filter(conn => conn.active).length
 }
 
+// 初始化可靠性配置
+const initializeReliabilityConfig = () => {
+  const config = {}
+  for (let i = 0; i < sessionConfig.value.nodeCount; i++) {
+    if (i !== nodeId) {
+      config[i] = 100  // 默认100%可靠性
+    }
+  }
+  reliabilityConfig.value = config
+  console.log('初始化可靠性配置:', reliabilityConfig.value)
+  
+  // 初始化后立即发送到后端
+  if (socket.value) {
+    socket.value.emit('update_reliability', {
+      sessionId,
+      nodeId,
+      reliability: reliabilityConfig.value
+    })
+    console.log('已发送初始可靠性配置到后端')
+  }
+}
+
+// 初始化差异化消息配置
+const initializeDifferentialConfig = () => {
+  const config = {}
+  for (let i = 0; i < sessionConfig.value.nodeCount; i++) {
+    if (i !== nodeId) {
+      config[i] = 0  // 默认发送正确值
+    }
+  }
+  differentialMessageConfig.value = config
+  console.log('初始化差异化消息配置:', differentialMessageConfig.value)
+}
+
+// 切换差异化消息矩阵显示
+const toggleDifferentialMatrix = () => {
+  showDifferentialMatrix.value = !showDifferentialMatrix.value
+  if (showDifferentialMatrix.value) {
+    // 第一次打开时初始化配置
+    if (Object.keys(differentialMessageConfig.value).length === 0) {
+      initializeDifferentialConfig()
+    }
+  }
+}
+
+// 批量设置差异化消息
+const setAllDifferential = (value) => {
+  for (let i = 0; i < sessionConfig.value.nodeCount; i++) {
+    if (i !== nodeId) {
+      differentialMessageConfig.value[i] = value
+    }
+  }
+  const valueText = value === 0 ? '正确值' : '错误值'
+  ElMessage.success(`已将所有节点设置为发送${valueText}`)
+}
+
+// 随机设置差异化消息
+const randomizeDifferential = () => {
+  for (let i = 0; i < sessionConfig.value.nodeCount; i++) {
+    if (i !== nodeId) {
+      differentialMessageConfig.value[i] = Math.random() < 0.5 ? 0 : 1
+    }
+  }
+  ElMessage.success('已随机设置各节点的消息值')
+}
+
+// 发送随机差异化消息（直接发送，不需要配置）
+const sendRandomDifferentialMessage = () => {
+  if (!hasChosenAction.value || isNormalMode.value) {
+    ElMessage.error('请先选择拜占庭攻击模式')
+    return
+  }
+
+  if (currentPhase.value !== 'prepare' && currentPhase.value !== 'commit') {
+    ElMessage.warning('当前阶段无法发送差异化消息，请在准备或提交阶段使用该功能')
+    return
+  }
+  
+  if (socket.value) {
+    // 构建差异化消息数据
+    const messageData = {
+      sessionId,
+      nodeId,
+      differential: true,  // 标记为差异化消息
+      messages: {}  // {targetNodeId: value}
+    }
+    
+    let correctCount = 0
+    let errorCount = 0
+    
+    // 为每个目标节点随机设置发送的值
+    for (let i = 0; i < sessionConfig.value.nodeCount; i++) {
+      if (i !== nodeId) {
+        const sendCorrect = Math.random() < 0.5
+        const valueToSend = sendCorrect ? acceptedValue.value : (acceptedValue.value === 0 ? 1 : 0)
+        messageData.messages[i] = valueToSend
+        
+        if (sendCorrect) correctCount++
+        else errorCount++
+      }
+    }
+    
+    console.log('发送随机差异化消息:', messageData)
+    
+    // 根据当前阶段发送相应的差异化消息
+    if (currentPhase.value === 'prepare') {
+      socket.value.emit('send_differential_prepare', messageData)
+    } else if (currentPhase.value === 'commit') {
+      socket.value.emit('send_differential_commit', messageData)
+    }
+    
+    ElMessage.warning(`🦹 执行随机差异化攻击：${correctCount}个正确值，${errorCount}个错误值`)
+  }
+}
+
+// 发送差异化消息（保留原函数以防其他地方使用）
+const sendDifferentialMessage = () => {
+  if (!hasChosenAction.value || isNormalMode.value) {
+    ElMessage.error('请先选择拜占庭攻击模式')
+    return
+  }
+  
+  if (socket.value) {
+    // 构建差异化消息数据
+    const messageData = {
+      sessionId,
+      nodeId,
+      differential: true,  // 标记为差异化消息
+      messages: {}  // {targetNodeId: value}
+    }
+    
+    // 为每个目标节点设置发送的值
+    Object.keys(differentialMessageConfig.value).forEach(targetNode => {
+      const sendCorrect = differentialMessageConfig.value[targetNode] === 0
+      const valueToSend = sendCorrect ? acceptedValue.value : (acceptedValue.value === 0 ? 1 : 0)
+      messageData.messages[parseInt(targetNode)] = valueToSend
+    })
+    
+    console.log('发送差异化消息:', messageData)
+    
+    // 根据当前阶段发送相应的差异化消息
+    if (currentPhase.value === 'prepare') {
+      socket.value.emit('send_differential_prepare', messageData)
+    } else if (currentPhase.value === 'commit') {
+      socket.value.emit('send_differential_commit', messageData)
+    }
+    
+    // 统计发送情况
+    let correctCount = 0
+    let errorCount = 0
+    Object.values(differentialMessageConfig.value).forEach(val => {
+      if (val === 0) correctCount++
+      else errorCount++
+    })
+    
+    ElMessage.warning(`🦹 执行差异化攻击：${correctCount}个正确值，${errorCount}个错误值`)
+  }
+}
+
+// 更新可靠性配置并发送到后端
+const updateReliability = (targetNode, value) => {
+  // 确保 targetNode 是整数类型
+  const targetNodeInt = parseInt(targetNode)
+  reliabilityConfig.value[targetNodeInt] = value
+  
+  // 发送到后端（转换所有键为整数）
+  if (socket.value) {
+    const reliabilityToSend = {}
+    Object.keys(reliabilityConfig.value).forEach(key => {
+      reliabilityToSend[parseInt(key)] = reliabilityConfig.value[key]
+    })
+    
+    socket.value.emit('update_reliability', {
+      sessionId,
+      nodeId,
+      reliability: reliabilityToSend
+    })
+  }
+  
+  console.log(`更新节点 ${targetNodeInt} 的可靠性为 ${value}%`)
+}
+
+// 批量设置所有节点的可靠性
+const setAllReliability = (value) => {
+  for (let i = 0; i < sessionConfig.value.nodeCount; i++) {
+    if (i !== nodeId) {
+      reliabilityConfig.value[i] = value
+    }
+  }
+  
+  // 发送到后端（转换所有键为整数）
+  if (socket.value) {
+    const reliabilityToSend = {}
+    Object.keys(reliabilityConfig.value).forEach(key => {
+      reliabilityToSend[parseInt(key)] = reliabilityConfig.value[key]
+    })
+    
+    socket.value.emit('update_reliability', {
+      sessionId,
+      nodeId,
+      reliability: reliabilityToSend
+    })
+  }
+  
+  console.log(`批量设置可靠性为 ${value}%:`, reliabilityConfig.value)
+  ElMessage.success(`已将所有节点的可靠性设置为 ${value}%`)
+}
+
 // Consensus result display function
 const showConsensusResult = () => {
   console.log('显示共识结果')
@@ -923,38 +1321,53 @@ onUnmounted(() => {
 <style scoped>
 .node-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-}
-
-.header {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 0 20px;
-}
-
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  height: 100%;
-  color: white;
-}
-
-.node-info h2 {
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 300;
-}
-
-.session-info {
-  display: flex;
-  align-items: center;
-  gap: 15px;
+  background: linear-gradient(135deg, #d1d5db 0%, #e5e7eb 100%);
 }
 
 .main-content {
   padding: 20px;
+}
+
+.session-info-card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.info-section h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: #1f2937;
+}
+
+.tags-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.session-details {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-id {
+  font-size: 13px;
+  color: #6b7280;
 }
 
 .progress-card, .messages-card, .topology-card {
@@ -1259,8 +1672,8 @@ onUnmounted(() => {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: #409eff;
-  color: white;
+  background: #93c5fd;
+  color: #1f2937;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1268,7 +1681,7 @@ onUnmounted(() => {
   cursor: pointer;
   z-index: 2;
   transition: all 0.3s ease;
-  border: 2px solid white;
+  border: 2px solid #e5e7eb;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
@@ -1278,13 +1691,13 @@ onUnmounted(() => {
 }
 
 .topology-node.current-node {
-  background: #67c23a;
-  border-color: #67c23a;
+  background: #86efac;
+  border-color: #86efac;
 }
 
 .topology-node.proposer {
-  background: #e6a23c;
-  border-color: #e6a23c;
+  background: #facc15;
+  border-color: #facc15;
 }
 
 .topology-node.visible-node {
@@ -1376,17 +1789,151 @@ onUnmounted(() => {
   }
 }
 
+/* 可靠性控制样式 */
+.reliability-control {
+  margin-top: 15px;
+}
+
+.reliability-matrix {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 10px;
+}
+
+.reliability-items {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.reliability-item {
+  margin-bottom: 15px;
+  padding: 10px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e4e7ed;
+}
+
+.reliability-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.reliability-value {
+  color: #409eff;
+  font-weight: bold;
+  font-size: 15px;
+}
+
+.quick-set {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e4e7ed;
+}
+
+/* 差异化消息控制样式 */
+.differential-message-control {
+  padding: 15px;
+  border: 2px solid #e6a23c;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #fffaf0 0%, #fff5e6 100%);
+}
+
+.differential-matrix {
+  background: #fef8f0;
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 10px;
+}
+
+.quick-set-differential {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e6a23c;
+}
+
+.differential-items {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.differential-item {
+  margin-bottom: 15px;
+  padding: 12px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e6a23c;
+}
+
+.differential-label {
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: #606266;
+  font-weight: 600;
+}
+
+.differential-item .el-radio-group {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.differential-item .el-radio {
+  flex: 1;
+  margin: 0;
+}
+
+.differential-tip {
+  margin-top: 10px;
+}
+
+.advanced-options-toggle {
+  width: 100%;
+  padding: 12px 20px;
+  background: white;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.advanced-options-toggle:hover {
+  background: #f9fafb;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  transform: translateY(-1px);
+}
+
+.advanced-options-toggle:active {
+  transform: translateY(0);
+}
+
 @media (max-width: 768px) {
   .main-content {
     padding: 10px;
   }
   
-  .header-content {
-    flex-direction: column;
-    gap: 10px;
+  .session-info-card {
+    padding: 15px;
   }
   
-  .node-info h2 {
+  .info-section h2 {
     font-size: 1.2rem;
   }
 }

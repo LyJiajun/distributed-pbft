@@ -13,7 +13,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 
 export default {
-  props: ["topologyType", "nodeCount", "byzantineNodes", "simulationResult", "proposalValue"],
+  props: ["topologyType", "nodeCount", "byzantineNodes", "simulationResult", "proposalValue", "animationSpeed"],
   setup(props) {
     const canvas = ref(null);
     const ctx = ref(null);
@@ -101,6 +101,11 @@ export default {
 
     // 单个阶段内所有消息动画同时播放的处理函数
     const animatePhase = (messages, doneCallback) => {
+      // 根据animationSpeed计算步数：速度越快，步数越少
+      // 基础步数100，除以速度系数（默认速度1x对应100步）
+      const speed = props.animationSpeed || 1;
+      const steps = Math.round(100 / speed);
+      
       const animations = messages
         .filter((msg) => msg.dst !== null)
         .map((msg) => {
@@ -109,7 +114,7 @@ export default {
             start: nodePositions.value[msg.src],
             end: nodePositions.value[msg.dst],
             frame: 0,
-            steps: 100 // 动画步数设为 100，降低动画速度
+            steps: steps // 根据速度动态计算动画步数
           };
         });
 
