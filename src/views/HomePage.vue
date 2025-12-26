@@ -1,15 +1,28 @@
 <template>
   <div class="home-page">
     <el-container>
-      <el-header class="header">
-        <h1>分布式PBFT共识系统</h1>
-        <p>创建共识会话，让用户扮演节点参与共识过程</p>
-      </el-header>
-      
       <el-main class="main-content">
-        <el-row :gutter="40">
-          <!-- Left: Parameter Configuration -->
-          <el-col :span="12">
+        <div class="page-container">
+          <!-- 左侧导航 -->
+          <div class="side-navigation">
+            <div class="radio-container">
+              <input :checked="currentPage === 'consensus'" id="radio-consensus" name="page-nav" type="radio" @change="currentPage = 'consensus'" />
+              <label for="radio-consensus">共识系统</label>
+              <input :checked="currentPage === 'experiment'" id="radio-experiment" name="page-nav" type="radio" @change="currentPage = 'experiment'" />
+              <label for="radio-experiment">实验</label>
+              <div class="glider-container">
+                <div class="glider"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧内容区 -->
+          <div class="content-area">
+            <!-- 共识系统页面 -->
+            <div v-show="currentPage === 'consensus'" class="page-content">
+              <el-row :gutter="40">
+                <!-- Left: Parameter Configuration -->
+                <el-col :span="12">
             <el-card class="config-card">
               <template #header>
                 <div class="card-header">
@@ -248,11 +261,13 @@
             </el-card>
           </el-col>
         </el-row>
+            </div>
         
-        <!-- 可靠度实验模块 -->
-        <el-row :gutter="40" style="margin-top: 40px;">
-          <el-col :span="24">
-            <el-card class="experiment-card">
+            <!-- 实验页面 -->
+            <div v-show="currentPage === 'experiment'" class="page-content">
+              <el-row :gutter="40">
+                <el-col :span="24">
+                  <el-card class="experiment-card">
               <template #header>
                 <div class="card-header" style="display: flex; align-items: center; justify-content: space-between;">
                   <span>🔬 通信可靠度对共识影响实验</span>
@@ -263,7 +278,7 @@
               </template>
               
               <div class="experiment-content">
-                <el-row :gutter="30">
+                <el-row :gutter="40">
                   <!-- 左侧：实验配置 -->
                   <el-col :span="8">
                     <div class="experiment-config">
@@ -342,11 +357,16 @@
                       <h3>实验进度</h3>
                       <div v-if="experimentRunning || experimentResults.length > 0">
                         <el-statistic title="当前轮次" :value="currentExperimentRound" :suffix="`/ ${experimentConfig.rounds}`" />
-                        <el-progress 
-                          :percentage="Math.round((currentExperimentRound / experimentConfig.rounds) * 100)" 
-                          :status="experimentRunning ? 'success' : 'info'"
-                          style="margin-top: 20px;"
-                        />
+                        
+                        <!-- 波浪形加载动画 -->
+                        <div class="wave-loader-container" style="margin-top: 20px;">
+                          <ul class="wave-menu" :class="{ 'completed': !experimentRunning }">
+                            <li v-for="i in 9" :key="i"></li>
+                          </ul>
+                          <div class="progress-text">
+                            {{ Math.round((currentExperimentRound / experimentConfig.rounds) * 100) }}%
+                          </div>
+                        </div>
                         
                         <div class="stats-grid" style="margin-top: 30px;">
                           <div class="stat-item">
@@ -427,8 +447,11 @@
                 </el-row>
               </div>
             </el-card>
-          </el-col>
-        </el-row>
+                </el-col>
+              </el-row>
+            </div>
+          </div>
+        </div>
       </el-main>
     </el-container>
     
@@ -590,6 +613,9 @@ export default {
     PBFTTable
   },
   setup() {
+    // 页面导航
+    const currentPage = ref('consensus')
+    
     const formRef = ref(null)
     const qrContainer = ref(null)
     const creating = ref(false)
@@ -612,6 +638,7 @@ export default {
     const experimentSessionId = ref(null)
     const chartContainer = ref(null)
     const showChartDialog = ref(false)
+    const theoreticalSuccessRate = ref(0) // 理论成功率
     let chartInstance = null
     const experimentConfig = reactive({
       nodeCount: 6,
@@ -941,18 +968,86 @@ export default {
       const rounds = cumulativeSuccessRate.value.map(item => item.round)
       const rates = cumulativeSuccessRate.value.map(item => item.rate)
       
+      // 构建系列数据
+      const seriesData = [
+        {
+          name: '实验成功率',
+          type: 'line',
+          data: rates.map((rate, index) => [rounds[index], rate]),
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 6,
+          lineStyle: {
+            color: '#409EFF',
+            width: 2
+          },
+          itemStyle: {
+            color: '#409EFF'
+          },
+          areaStyle: {
+            color: {
+              type: 'linear',
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: 'rgba(64, 158, 255, 0.3)' },
+                { offset: 1, color: 'rgba(64, 158, 255, 0.1)' }
+              ]
+            }
+          }
+        }
+      ]
+      
+      // 如果有理论成功率，添加理论值虚线
+      if (theoreticalSuccessRate.value > 0) {
+        seriesData.push({
+          name: '理论成功率',
+          type: 'line',
+          data: rounds.map(round => [round, theoreticalSuccessRate.value]),
+          lineStyle: {
+            color: '#F56C6C',
+            width: 2,
+            type: 'dashed' // 虚线
+          },
+          symbol: 'none', // 不显示数据点
+          itemStyle: {
+            color: '#F56C6C'
+          },
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            label: {
+              show: true,
+              position: 'end',
+              formatter: `理论值: ${theoreticalSuccessRate.value.toFixed(2)}%`,
+              color: '#F56C6C'
+            }
+          }
+        })
+      }
+      
       const option = {
         tooltip: {
           trigger: 'axis',
           formatter: (params) => {
-            const param = params[0]
-            return `第${param.value[0]}轮<br/>累计成功率: ${param.value[1]}%`
+            let result = `第${params[0].value[0]}轮<br/>`
+            params.forEach(param => {
+              result += `${param.seriesName}: ${param.value[1].toFixed(2)}%<br/>`
+            })
+            return result
           }
+        },
+        legend: {
+          data: theoreticalSuccessRate.value > 0 ? ['实验成功率', '理论成功率'] : ['实验成功率'],
+          top: '5%',
+          left: 'center'
         },
         grid: {
           left: '10%',
           right: '10%',
-          top: '15%',
+          top: '20%',
           bottom: '15%'
         },
         xAxis: {
@@ -981,36 +1076,7 @@ export default {
             formatter: '{value}%'
           }
         },
-        series: [
-          {
-            name: '累计成功率',
-            type: 'line',
-            data: rates.map((rate, index) => [rounds[index], rate]),
-            smooth: true,
-            symbol: 'circle',
-            symbolSize: 6,
-            lineStyle: {
-              color: '#409EFF',
-              width: 2
-            },
-            itemStyle: {
-              color: '#409EFF'
-            },
-            areaStyle: {
-              color: {
-                type: 'linear',
-                x: 0,
-                y: 0,
-                x2: 0,
-                y2: 1,
-                colorStops: [
-                  { offset: 0, color: 'rgba(64, 158, 255, 0.3)' },
-                  { offset: 1, color: 'rgba(64, 158, 255, 0.1)' }
-                ]
-              }
-            }
-          }
-        ]
+        series: seriesData
       }
       
       chartInstance.setOption(option)
@@ -1074,8 +1140,9 @@ export default {
         experimentStopRequested.value = false
         currentExperimentRound.value = 0
         experimentResults.value = []
+        theoreticalSuccessRate.value = 0
         
-        ElMessage.success('实验启动成功！')
+        ElMessage.success('实验启动中，请稍候...')
         
         // 创建实验会话（全机器人节点）
         const response = await axios.post('/api/sessions', {
@@ -1093,65 +1160,40 @@ export default {
         
         experimentSessionId.value = response.data.sessionId
         
-        // 开始多轮实验
-        for (let round = 1; round <= experimentConfig.rounds; round++) {
-          if (experimentStopRequested.value) {
-            break
+        console.log(`[实验] 开始批量实验: ${experimentConfig.rounds}轮`)
+        
+        // 调用批量实验API，后端一次性完成所有轮次
+        const batchResponse = await axios.post(
+          `/api/sessions/${experimentSessionId.value}/run-batch-experiment`,
+          null,
+          { 
+            params: { rounds: experimentConfig.rounds },
+            timeout: 300000 // 5分钟超时
           }
-          if (!experimentRunning.value) break // 检查是否被停止
-          
-          currentExperimentRound.value = round
-          
-          const startTime = Date.now()
-          
-          // 触发一轮共识（通过重置轮次）
-          const resetResponse = await axios.post(`/api/sessions/${experimentSessionId.value}/reset-round`)
-          const actualRound = resetResponse.data.currentRound || round
-          console.log(`[实验] 触发第${round}轮共识，后端实际轮次: ${actualRound}`)
-          
-          // 等待足够的时间，让后端开始共识流程并发送消息
-          // 加速模式：机器人节点现在立即初始化，无延迟
-          // 机器人节点需要：pre-prepare (立即) + prepare (立即) + commit (立即) = 约0.05s
-          // 设置等待时间为500ms，匹配后端加速后的实际时间
-          await new Promise(resolve => setTimeout(resolve, 500))
-          
-          // 等待共识完成（使用后端返回的实际轮次）
-          const result = await waitForConsensus(experimentSessionId.value, actualRound)
-          if (experimentStopRequested.value || result.aborted) {
-            break
-          }
-          
-          const duration = Date.now() - startTime
-          
-          experimentResults.value.push({
-            round: round,
-            success: result.success,
-            messageCount: result.messageCount,
-            duration: duration,
-            failureReason: result.failureReason || null
-          })
-          
-          // 延迟一下再进行下一轮（确保上一轮完全清理完毕）
-          if (experimentStopRequested.value) {
-            break
-          }
-
-          await new Promise(resolve => setTimeout(resolve, 1500))
-        }
+        )
+        
+        // 获取批量结果
+        const batchData = batchResponse.data
+        experimentResults.value = batchData.results
+        theoreticalSuccessRate.value = batchData.theoreticalSuccessRate
+        currentExperimentRound.value = experimentConfig.rounds
+        
+        console.log(`[实验] 批量实验完成:`)
+        console.log(`  - 总轮数: ${batchData.totalRounds}`)
+        console.log(`  - 成功: ${batchData.successCount}`)
+        console.log(`  - 失败: ${batchData.failureCount}`)
+        console.log(`  - 实验成功率: ${batchData.experimentalSuccessRate}%`)
+        console.log(`  - 理论成功率: ${batchData.theoreticalSuccessRate}%`)
         
         experimentRunning.value = false
-        const wasStopped = experimentStopRequested.value
         await cleanupExperimentSession()
         experimentStopRequested.value = false
-        experimentRunning.value = false
-        if (!wasStopped) {
-          currentExperimentRound.value = experimentConfig.rounds
-          ElMessage.success('实验完成！')
-        }
+        
+        ElMessage.success(`实验完成！成功率: ${batchData.experimentalSuccessRate}% (理论: ${batchData.theoreticalSuccessRate}%)`)
         
       } catch (error) {
         console.error('实验失败:', error)
-        ElMessage.error('实验启动失败: ' + (error.response?.data?.detail || error.message))
+        ElMessage.error('实验失败: ' + (error.response?.data?.detail || error.message))
         experimentRunning.value = false
         await cleanupExperimentSession()
         experimentStopRequested.value = false
@@ -1391,6 +1433,9 @@ export default {
     }
     
     return {
+      // 页面导航
+      currentPage,
+      // 表单
       formRef,
       qrContainer,
       creating,
@@ -1421,6 +1466,7 @@ export default {
       successCount,
       failureCount,
       successRate,
+      theoreticalSuccessRate,
       startExperiment,
       stopExperiment,
       exportResults,
@@ -1462,7 +1508,144 @@ export default {
 }
 
 .main-content {
-  padding: 40px;
+  padding: 40px 60px;
+  max-width: none;
+  width: 100%;
+}
+
+/* 页面容器和导航 */
+.page-container {
+  display: flex;
+  gap: 30px;
+  width: 100%;
+  max-width: none;
+}
+
+.side-navigation {
+  position: fixed;
+  left: 20px;
+  top: 40px;
+  width: 180px;
+  z-index: 100;
+}
+
+.content-area {
+  flex: 1;
+  min-width: 0;
+  margin-left: 210px;
+}
+
+.page-content {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 导航单选按钮样式 */
+.radio-container {
+  --main-color: #f7e479;
+  --main-color-opacity: #f7e4791c;
+  --total-radio: 2;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding-left: 0.5rem;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  padding: 20px 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.radio-container input {
+  cursor: pointer;
+  appearance: none;
+  position: absolute;
+  opacity: 0;
+}
+
+.radio-container .glider-container {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(27, 27, 27, 1) 50%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  width: 1px;
+}
+
+.radio-container .glider-container .glider {
+  position: relative;
+  height: calc(100% / var(--total-radio));
+  width: 100%;
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0%,
+    var(--main-color) 50%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  transition: transform 0.5s cubic-bezier(0.37, 1.95, 0.66, 0.56);
+}
+
+.radio-container .glider-container .glider::before {
+  content: "";
+  position: absolute;
+  height: 60%;
+  width: 300%;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--main-color);
+  filter: blur(10px);
+}
+
+.radio-container .glider-container .glider::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  height: 100%;
+  width: 150px;
+  background: linear-gradient(
+    90deg,
+    var(--main-color-opacity) 0%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+
+.radio-container label {
+  cursor: pointer;
+  padding: 1.2rem 1rem;
+  position: relative;
+  color: #909399;
+  transition: all 0.3s ease-in-out;
+  font-size: 15px;
+  font-weight: 500;
+  user-select: none;
+}
+
+.radio-container input:checked + label {
+  color: var(--main-color);
+  font-weight: 600;
+}
+
+.radio-container input:nth-of-type(1):checked ~ .glider-container .glider {
+  transform: translateY(0);
+}
+
+.radio-container input:nth-of-type(2):checked ~ .glider-container .glider {
+  transform: translateY(100%);
 }
 
 .config-card, .qr-card, .welcome-card {
@@ -1662,6 +1845,8 @@ export default {
 /* 实验模块样式 */
 .experiment-card {
   margin-top: 40px;
+  max-width: 100%;
+  width: 100%;
 }
 
 .experiment-content h3 {
@@ -1688,6 +1873,151 @@ export default {
 
 .chart-dialog-content {
   padding: 20px;
+}
+
+/* 波浪形加载器样式 */
+.wave-loader-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+}
+
+.wave-menu {
+  border: 4px solid #545FE5;
+  border-radius: 50px;
+  width: 350px;
+  height: 50px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  transition: ease 0.2s;
+  position: relative;
+  background: #fff;
+  list-style: none;
+}
+
+.wave-menu.completed {
+  border-color: #67c23a;
+}
+
+.wave-menu li {
+  list-style: none;
+  height: 35px;
+  width: 5px;
+  border-radius: 10px;
+  background: #545FE5;
+  margin: 0 10px;
+  padding: 0;
+  animation-name: wave1;
+  animation-duration: 0.3s;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+  transition: ease 0.2s;
+}
+
+.wave-menu.completed li {
+  background: #67c23a;
+  animation: none;
+  transform: scaleY(1);
+}
+
+.wave-menu:hover > li {
+  background: #fff;
+}
+
+.wave-menu:hover {
+  background: #545FE5;
+}
+
+.wave-menu.completed:hover {
+  background: #67c23a;
+}
+
+.wave-menu li:nth-child(2) {
+  animation-name: wave2;
+  animation-delay: 0.2s;
+}
+
+.wave-menu li:nth-child(3) {
+  animation-name: wave3;
+  animation-delay: 0.23s;
+  animation-duration: 0.4s;
+}
+
+.wave-menu li:nth-child(4) {
+  animation-name: wave4;
+  animation-delay: 0.1s;
+  animation-duration: 0.3s;
+}
+
+.wave-menu li:nth-child(5) {
+  animation-delay: 0.5s;
+}
+
+.wave-menu li:nth-child(6) {
+  animation-name: wave2;
+  animation-duration: 0.5s;
+}
+
+.wave-menu li:nth-child(8) {
+  animation-name: wave4;
+  animation-delay: 0.4s;
+  animation-duration: 0.25s;
+}
+
+.wave-menu li:nth-child(9) {
+  animation-name: wave3;
+  animation-delay: 0.15s;
+}
+
+@keyframes wave1 {
+  from {
+    transform: scaleY(1);
+  }
+  to {
+    transform: scaleY(0.5);
+  }
+}
+
+@keyframes wave2 {
+  from {
+    transform: scaleY(0.3);
+  }
+  to {
+    transform: scaleY(0.6);
+  }
+}
+
+@keyframes wave3 {
+  from {
+    transform: scaleY(0.6);
+  }
+  to {
+    transform: scaleY(0.8);
+  }
+}
+
+@keyframes wave4 {
+  from {
+    transform: scaleY(0.2);
+  }
+  to {
+    transform: scaleY(0.5);
+  }
+}
+
+.progress-text {
+  font-size: 18px;
+  font-weight: 600;
+  color: #545FE5;
+}
+
+.wave-menu.completed ~ .progress-text {
+  color: #67c23a;
 }
 
 .stats-grid {

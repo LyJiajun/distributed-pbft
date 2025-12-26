@@ -190,6 +190,79 @@ def should_deliver_message(session_id: str, from_node: int = None, to_node: int 
     # 生成随机数，如果小于传达概率则发送消息
     return random.random() * 100 < delivery_rate
 
+def calculate_theoretical_success_rate(n: int, f: int, p: float) -> float:
+    """计算PBFT共识的理论成功概率（口径A：N_c ≥ N − f）
+
+    严格对齐论文 Theorem 1（式(1)–(6)）在以下特例下的闭式化简：
+    - 全连接网络
+    - 所有节点在线（P(V_node)=1）
+    - 同质链路：p^L_{i,j} = p
+    - n 给定，f = floor((n-1)/3)
+    - 成功判据：commit 成功节点数 N_c ≥ N − f
+
+    注意：单节点在 prepare/commit 阶段的门限来自式(6)：至少收到 2f 条成功消息（来自其他节点）。
+    """
+    from math import comb
+
+    def binom_prob(n_trials: int, k_success: int, prob: float) -> float:
+        if k_success > n_trials or k_success < 0:
+            return 0.0
+        return comb(n_trials, k_success) * (prob ** k_success) * ((1 - prob) ** (n_trials - k_success))
+
+    # q_{>=k}(m) = P(Bin(m,p) >= k)
+    def binom_tail_ge(m: int, k: int, prob: float) -> float:
+        if k <= 0:
+            return 1.0
+        if m < 0:
+            return 0.0
+        if k > m:
+            return 0.0
+        return sum(binom_prob(m, i, prob) for i in range(k, m + 1))
+
+    # 口径A：最终成功要求 N_c >= N - f
+    nc_required = n - f
+    # 论文式(6)中使用的“至少收到2f条成功消息”（来自其他节点）
+    k_required = 2 * f
+
+    total_prob = 0.0
+
+    # pre-prepare：主节点v0始终在V_pp，n-1个副本中有 x-1 个收到
+    # 因为要求 N_pp >= N_p >= N_c >= N-f，所以这里 x 从 nc_required 到 n
+    for x in range(nc_required, n + 1):
+        # P(N_pp = x)
+        p_pp = binom_prob(n - 1, x - 1, p)
+        if p_pp < 1e-15:
+            continue
+
+        # prepare：给定 N_pp = x
+        # 主节点从 x-1 个副本收到 prepare，需 >=2f
+        q0 = binom_tail_ge(x - 1, k_required, p)
+        # 副本从其余 (x-2) 个副本收到 prepare，需 >=2f
+        q1 = binom_tail_ge(x - 2, k_required, p)
+
+        # 枚举 N_p = y（也必须 >= nc_required，且 y <= x）
+        for y in range(nc_required, x + 1):
+            # P(N_p = y | N_pp = x)
+            # 两种情况：主节点在/不在 V_p
+            p_p_y_given_x = 0.0
+            # 主节点在V_p：副本中有 y-1 个进入
+            p_p_y_given_x += q0 * binom_prob(x - 1, y - 1, q1)
+            # 主节点不在V_p：副本中有 y 个进入
+            p_p_y_given_x += (1 - q0) * binom_prob(x - 1, y, q1)
+
+            if p_p_y_given_x < 1e-15:
+                continue
+
+            # commit：给定 N_p = y
+            # 节点从其他 y-1 个节点收到 commit，需 >=2f
+            q2 = binom_tail_ge(y - 1, k_required, p)
+            # P(N_c >= N-f | N_p = y)
+            p_c_ge = sum(binom_prob(y, z, q2) for z in range(nc_required, y + 1))
+
+            total_prob += p_pp * p_p_y_given_x * p_c_ge
+
+    return total_prob
+
 # HTTP路由
 @app.post("/api/sessions")
 async def create_consensus_session(config: SessionConfig):
@@ -347,6 +420,134 @@ async def reset_round(session_id: str):
         "sessionId": session_id,
         "currentRound": session["current_round"],
         "phase": session["phase"]
+    }
+
+@app.post("/api/sessions/{session_id}/run-batch-experiment")
+async def run_batch_experiment(session_id: str, rounds: int = 30):
+    """批量运行多轮实验，完成后一次性返回所有结果
+    
+    Args:
+        session_id: 会话ID
+        rounds: 实验轮数
+    
+    Returns:
+        {
+            "results": [...],  # 每轮的结果
+            "theoreticalSuccessRate": 0.85,  # 理论成功率
+            "experimentalSuccessRate": 0.83  # 实验成功率
+        }
+    """
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    
+    config = session["config"]
+    n = config["nodeCount"]
+    f = (n - 1) // 3
+    p = config["messageDeliveryRate"] / 100.0  # 转换为概率
+    
+    # 计算理论成功率
+    theoretical_rate = calculate_theoretical_success_rate(n, f, p)
+    
+    print(f"开始批量实验：{rounds}轮，n={n}, f={f}, p={p}, 理论成功率={theoretical_rate:.4f}")
+    
+    # 存储所有轮次的结果
+    all_results = []
+
+    # 批量实验必须严格“等一轮结束再进入下一轮”，否则会出现异步任务跨轮写入（round字段错乱）
+    # 这里复用现有的 reset_round 逻辑，确保每轮初始化、触发、超时机制一致。
+    session["current_round"] = 0
+    session["consensus_finalized_round"] = None
+    session["last_pre_prepare_round"] = None
+
+    for round_num in range(1, rounds + 1):
+        # 触发新一轮（reset_round 内部会 +1 并触发 pre-prepare）
+        reset_info = await reset_round(session_id)
+        current_round = reset_info.get("currentRound", round_num)
+
+        # 等待本轮结束：
+        # - 成功会由 check_commit_phase -> finalize_consensus 写入 consensus_history
+        # - 失败会由 timeout_task(2s) -> finalize_consensus 写入 consensus_history
+        max_wait = 3.0  # 给 finalize_consensus 留一点余量，避免2s边界竞态
+        check_interval = 0.05
+        waited_time = 0.0
+
+        while waited_time < max_wait:
+            await asyncio.sleep(check_interval)
+            waited_time += check_interval
+
+            session = get_session(session_id)
+            if not session:
+                break
+
+            # 优先用 finalized_round，避免 history 还未来得及 append 的瞬间
+            if session.get("consensus_finalized_round") == current_round:
+                break
+
+            history = session.get("consensus_history", [])
+            if any(h.get("round") == current_round for h in history):
+                break
+
+        session = get_session(session_id)
+        if not session:
+            break
+
+        history = session.get("consensus_history", [])
+        round_history = next((h for h in history if h.get("round") == current_round), None)
+        
+        # 统计该轮的消息数
+        messages = session.get("messages", {})
+        all_messages = []
+        for msg_type in ["pre_prepare", "prepare", "commit"]:
+            all_messages.extend(messages.get(msg_type, []))
+        
+        round_messages = [m for m in all_messages if m.get("round") == current_round]
+        message_count = len(round_messages)
+        
+        # 判断成功与否
+        success = False
+        failure_reason = None
+        
+        if round_history:
+            status_text = round_history.get("status", "")
+            description = round_history.get("description", "")
+            success = "成功" in status_text and "失败" not in status_text
+            
+            if not success:
+                if "超时" in status_text:
+                    failure_reason = "超时"
+                elif description:
+                    failure_reason = description
+                else:
+                    failure_reason = status_text or "失败"
+        else:
+            failure_reason = "超时" if waited_time >= max_wait else "未知"
+        
+        result = {
+            "round": round_num,
+            "success": success,
+            "messageCount": message_count,
+            "failureReason": failure_reason,
+            "waitTime": round(waited_time * 1000)  # 转换为毫秒
+        }
+        
+        all_results.append(result)
+        
+        print(f"第{round_num}轮完成: {'成功' if success else '失败'}, 消息数={message_count}, 等待时间={result['waitTime']}ms")
+    
+    # 计算实验成功率
+    success_count = sum(1 for r in all_results if r["success"])
+    experimental_rate = success_count / len(all_results) if all_results else 0
+    
+    print(f"批量实验完成：成功{success_count}/{len(all_results)}轮，实验成功率={experimental_rate:.4f}，理论成功率={theoretical_rate:.4f}")
+    
+    return {
+        "results": all_results,
+        "theoreticalSuccessRate": round(theoretical_rate * 100, 2),  # 转换为百分比
+        "experimentalSuccessRate": round(experimental_rate * 100, 2),
+        "totalRounds": len(all_results),
+        "successCount": success_count,
+        "failureCount": len(all_results) - success_count
     }
 
 @app.post("/api/sessions/{session_id}/assign-node")
@@ -1188,53 +1389,23 @@ async def check_prepare_phase(session_id: str):
     print(f"准备阶段检查 - 发送正确消息的节点: {correct_nodes}")
     print(f"准备阶段检查 - 主节点收到的正确prepare数量: {len(primary_correct_nodes)}, 需要数量: {primary_required}")
     
-    # 主节点视角：一旦收到足够多的正确prepare（超过2f个），先进入commit阶段发送commit消息，然后再完成共识
-    # 这样前端可以看到commit消息，用于实验统计
-    # 注意：所有节点都是好节点，不会发错误信息，所以只要收到超过2f个prepare即可
-    if len(primary_correct_nodes) > primary_required:
-        print(f"主节点视角下收到{len(primary_correct_nodes)}个正确prepare（需要超过{primary_required}个），进入提交阶段")
-        # 先进入commit阶段，让所有节点发送commit消息
-        await start_commit_phase(session_id)
-        
-        # 等待commit消息发送完成：检查实际发送的commit消息数量
-        # 需要等待至少 (nodeCount - 1) 个commit消息（节点0是提议者，其他节点都应该发送）
-        expected_commit_count = config["nodeCount"] - 1
-        max_wait_time = 0.5  # 从3秒减少到0.5秒（加速模式）  # 最多等待3秒
-        check_interval = 0.01  # 从100ms减少到10ms（加速模式）  # 每100ms检查一次
-        waited_time = 0
-        
-        while waited_time < max_wait_time:
-            await asyncio.sleep(check_interval)
-            waited_time += check_interval
-            
-            # 检查当前轮次的commit消息数量
-            current_round = session["current_round"]
-            commit_messages = [
-                msg for msg in session["messages"]["commit"]
-                if msg.get("round", current_round) == current_round
-            ]
-            
-            if len(commit_messages) >= expected_commit_count:
-                print(f"已收到足够的commit消息（{len(commit_messages)}/{expected_commit_count}），可以完成共识（加速模式）")
-                break
-            
-            # 如果轮次已经改变，说明前端已经调用了reset-round，立即完成共识
-            if session["current_round"] != current_round:
-                print(f"轮次已改变（{current_round} -> {session['current_round']}），停止等待commit消息（加速模式）")
-                break
-        
-        # 然后再完成共识
-        await finalize_consensus(
-            session_id,
-            "共识成功",
-            f"主节点收到{len(primary_correct_nodes)}个正确prepare"
+    # 口径A：不允许“只看主节点prepare就直接判成功”
+    # 这里只负责推动进入commit阶段；最终是否成功由 check_commit_phase 按 Nc >= N-f 判定。
+    # 论文式(6)的单节点门限是“至少收到 2f 条来自其他节点的消息”，因此这里用 >= 2f（不是 >）。
+    if len(primary_correct_nodes) >= primary_required:
+        print(
+            f"主节点收到{len(primary_correct_nodes)}个正确prepare（需要≥{primary_required}个），进入提交阶段"
         )
+        await start_commit_phase(session_id)
         return
     
     # 检查是否收到足够多的正确消息（超过2f个即可）
     # 注意：所有节点都是好节点，不会发错误信息
-    if len(correct_nodes) > required_correct_messages:
-        print(f"✅ 准备阶段完成（收到{len(correct_nodes)}个正确消息，需要超过{required_correct_messages}个），进入提交阶段")
+    # 保留一个保底路径：当网络整体出现足够多prepare发送者时也推进commit（不直接判成功）
+    if len(correct_nodes) >= (required_correct_messages + 1):
+        print(
+            f"✅ 准备阶段推进（发送正确prepare的节点数={len(correct_nodes)}），进入提交阶段"
+        )
         await start_commit_phase(session_id)
     else:
         print(f"❌ 准备阶段未完成，还需要 {required_correct_messages - len(correct_nodes)} 个正确消息（当前{len(correct_nodes)}/{required_correct_messages}）")
@@ -1316,55 +1487,55 @@ async def check_commit_phase(session_id: str):
             if msg.get("delivered", True) and message_to_primary(msg):
                 primary_correct_nodes.add(msg["from"])
     
-    # ========== 正确的PBFT共识判断 ==========
-    # 定义"commit节点"：收到≥2f+1条commit的节点（包括自己发送的）
-    # 共识成功标准：commit节点数量 ≥ 2f+1
-    threshold = 2 * f + 1
+    # ========== 共识判断（口径A：N_c ≥ N − f） ==========
+    # 对齐论文式(6)：commit 成功节点（commit节点）的定义是
+    # “从其他节点收到至少 2f 条成功 commit 消息”（不需要把自己那一条算进去）
+    commit_msg_threshold = 2 * f
+    success_threshold = n - f
     
     print(f"\n{'='*60}")
-    print(f"提交阶段检查（PBFT共识模型）")
+    print(f"提交阶段检查（口径A：N_c ≥ N − f）")
     print(f"{'='*60}")
-    print(f"总节点数: {n}, 容错数 f: {f}, 阈值: {threshold} (2f+1)")
+    print(f"总节点数: {n}, 容错数 f: {f}")
+    print(f"commit节点判定门限: {commit_msg_threshold} (2f, 来自其他节点)")
+    print(f"共识成功门限: {success_threshold} (N-f)")
     print(f"发送正确commit的节点: {sorted(correct_nodes)} (共{len(correct_nodes)}个)")
     
     # 统计每个节点收到的commit数量
     # 在广播模型下：如果节点 i 成功广播commit，所有其他节点都会收到
-    commit_nodes = []  # 收到≥2f+1条commit的节点
+    commit_nodes = []  # “commit节点”：收到≥2f+1条commit的节点
     non_commit_nodes = []  # 未收到足够commit的节点
     
     for node_id in session["robot_nodes"]:
         node_state = session["robot_node_states"][node_id]
+        # received_commit_count 本身就是“来自其他节点的commit数”
         received_count = node_state["received_commit_count"]
         
-        # 注意：节点自己发送的commit也应该算作收到（节点知道自己的决定）
-        if node_id in correct_nodes:
-            received_count += 1  # 加上自己发送的commit
-        
-        if received_count >= threshold:
+        if received_count >= commit_msg_threshold:
             commit_nodes.append(node_id)
-            print(f"  ✅ 节点 {node_id}: 收到 {received_count} 条commit (≥{threshold}) [commit节点]")
+            print(f"  ✅ 节点 {node_id}: 收到 {received_count} 条commit (≥{commit_msg_threshold}) [commit节点]")
         else:
             non_commit_nodes.append(node_id)
-            print(f"  ⏳ 节点 {node_id}: 收到 {received_count} 条commit (<{threshold})")
+            print(f"  ⏳ 节点 {node_id}: 收到 {received_count} 条commit (<{commit_msg_threshold})")
     
-    # 判断：commit节点数量 ≥ 2f+1
+    # 判断：commit节点数量 N_c ≥ N − f
     print(f"\ncommit节点数量: {len(commit_nodes)}/{n}")
     print(f"commit节点: {sorted(commit_nodes)}")
     
-    if len(commit_nodes) >= threshold:
+    if len(commit_nodes) >= success_threshold:
         print(f"\n✅✅✅ 共识成功！")
-        print(f"   {len(commit_nodes)} 个commit节点 ≥ {threshold} (阈值)")
+        print(f"   {len(commit_nodes)} 个commit节点 ≥ {success_threshold} (N-f)")
         print(f"   这些节点已达成共识，系统整体共识成功")
         print(f"{'='*60}\n")
         await finalize_consensus(
             session_id,
             "共识成功",
-            f"{len(commit_nodes)}个节点达成共识(≥{threshold})"
+            f"{len(commit_nodes)}个commit节点达成共识(≥{success_threshold})"
         )
         return
     else:
-        print(f"\n⏳ 共识进行中：{len(commit_nodes)}/{threshold} 个commit节点")
-        print(f"   还需要 {threshold - len(commit_nodes)} 个节点达成共识")
+        print(f"\n⏳ 共识进行中：{len(commit_nodes)}/{success_threshold} 个commit节点")
+        print(f"   还需要 {success_threshold - len(commit_nodes)} 个节点达成共识")
         print(f"{'='*60}\n")
 
 async def finalize_consensus(session_id: str, status: str = "共识完成", description: str = "共识已完成"):
@@ -1656,6 +1827,9 @@ async def robot_send_pre_prepare(session_id: str):
         print(f"提议者 {proposer_id} 是人类节点，等待人类操作")
         return
     
+    # 重要：主节点自己默认收到pre-prepare（因为它自己发起的）
+    session["robot_node_states"][proposer_id]["received_pre_prepare"] = True
+    
     # 点对点模型：对每个副本节点独立判断链路是否成功
     successful_count = 0
     for target_node_id in session["robot_nodes"]:
@@ -1696,27 +1870,156 @@ async def robot_send_pre_prepare(session_id: str):
             print(f"  ❌ 主节点 → 节点{target_node_id}: pre-prepare丢失")
     
     print(f"📊 Pre-prepare阶段完成: {successful_count}/{len(session['robot_nodes'])-1} 条链路成功")
-    
-    # 进入准备阶段（实验模式：立即切换，无延迟）
+
+    # 实验模式（全机器人）使用“同步阶段推进”，避免prepare/commit乱序导致的误判（对齐Theorem 1）
+    is_experiment_mode = config["robotNodes"] == config["nodeCount"]
+    if is_experiment_mode:
+        await run_experiment_round_sync(session_id)
+        return
+
+    # 正常模式：进入准备阶段（异步）
     session["phase"] = "prepare"
     session["phase_step"] = 1
-    
+
     await sio.emit('phase_update', {
         "phase": "prepare",
         "step": 1,
         "isMyTurn": True
     }, room=session_id)
-    
+
     print(f"会话 {session_id} 进入准备阶段")
-    
+
     # 启动超时任务（2秒后检查）
     current_round = session["current_round"]
     timeout_task = asyncio.create_task(handle_consensus_timeout(session_id, current_round))
     session["timeout_task"] = timeout_task
     print(f"第{current_round}轮共识超时检查已启动（2秒）")
-    
+
     # 机器人节点自动发送准备消息
     asyncio.create_task(robot_send_prepare_messages(session_id))
+
+
+async def run_experiment_round_sync(session_id: str):
+    """实验模式（全机器人）同步执行一轮PBFT（口径A：Nc>=N-f，单节点门限2f来自其他节点）
+
+    目的：对齐论文 Theorem 1（式(1)–(6)）的阶段假设，避免异步乱序导致
+    commit 在节点进入 V_p 前到达而被丢弃，从而把成功率严重拉低。
+    """
+    session = get_session(session_id)
+    if not session:
+        return
+    if session.get("status") in {"completed", "stopped"}:
+        return
+
+    config = session["config"]
+    n = config["nodeCount"]
+    f = (n - 1) // 3
+    current_round = session["current_round"]
+
+    # 口径A
+    success_threshold = n - f  # Nc >= N-f
+    per_node_threshold = 2 * f  # 单节点门限：来自其他节点的成功消息数 >= 2f
+
+    # V_pp
+    V_pp = [
+        node_id for node_id in session["robot_nodes"]
+        if session["robot_node_states"][node_id].get("received_pre_prepare")
+    ]
+
+    # 口径A：Nc>=N-f => Npp>=N-f，否则必失败
+    if len(V_pp) < success_threshold:
+        await finalize_consensus(
+            session_id,
+            "共识失败",
+            f"Pre-prepare失败：Npp={len(V_pp)} < N-f={success_threshold}"
+        )
+        return
+
+    # ========== Prepare（主节点不发送prepare，对齐论文特例化） ==========
+    session["phase"] = "prepare"
+    session["phase_step"] = 1
+    await sio.emit('phase_update', {"phase": "prepare", "step": 1, "isMyTurn": True}, room=session_id)
+
+    # 清零计数（避免任何残留）
+    for node_id in session["robot_nodes"]:
+        session["robot_node_states"][node_id]["received_prepare_count"] = 0
+
+    prepare_senders = [nid for nid in V_pp if nid != 0]
+    for sender in prepare_senders:
+        session["robot_node_states"][sender]["sent_prepare"] = True
+        for target in V_pp:
+            if target == sender:
+                continue
+            link_success = should_deliver_message(session_id, sender, target)
+            message = {
+                "from": sender,
+                "to": target,
+                "type": "prepare",
+                "value": config["proposalValue"],
+                "phase": "prepare",
+                "round": current_round,
+                "timestamp": datetime.now().isoformat(),
+                "tampered": False,
+                "isRobot": True,
+                "delivered": link_success
+            }
+            session["messages"]["prepare"].append(message)
+            if link_success:
+                session["robot_node_states"][target]["received_prepare_count"] += 1
+
+    V_p = [nid for nid in V_pp if session["robot_node_states"][nid]["received_prepare_count"] >= per_node_threshold]
+    if len(V_p) < success_threshold:
+        await finalize_consensus(
+            session_id,
+            "共识失败",
+            f"Prepare失败：Np={len(V_p)} < N-f={success_threshold}"
+        )
+        return
+
+    # ========== Commit ==========
+    session["phase"] = "commit"
+    session["phase_step"] = 2
+    await sio.emit('phase_update', {"phase": "commit", "step": 2, "isMyTurn": False}, room=session_id)
+
+    for node_id in session["robot_nodes"]:
+        session["robot_node_states"][node_id]["received_commit_count"] = 0
+
+    for sender in V_p:
+        session["robot_node_states"][sender]["sent_commit"] = True
+        for target in V_p:
+            if target == sender:
+                continue
+            link_success = should_deliver_message(session_id, sender, target)
+            message = {
+                "from": sender,
+                "to": target,
+                "type": "commit",
+                "value": config["proposalValue"],
+                "phase": "commit",
+                "round": current_round,
+                "timestamp": datetime.now().isoformat(),
+                "tampered": False,
+                "isRobot": True,
+                "delivered": link_success
+            }
+            session["messages"]["commit"].append(message)
+            if link_success:
+                session["robot_node_states"][target]["received_commit_count"] += 1
+
+    V_c = [nid for nid in V_p if session["robot_node_states"][nid]["received_commit_count"] >= per_node_threshold]
+
+    if len(V_c) >= success_threshold:
+        await finalize_consensus(
+            session_id,
+            "共识成功",
+            f"Nc={len(V_c)} ≥ N-f={success_threshold}"
+        )
+    else:
+        await finalize_consensus(
+            session_id,
+            "共识失败",
+            f"Nc={len(V_c)} < N-f={success_threshold}"
+        )
 
 async def robot_send_prepare_messages(session_id: str):
     """机器人节点自动发送准备消息
@@ -1753,13 +2056,14 @@ async def robot_send_prepare_messages(session_id: str):
         
         print(f"10秒延迟结束，开始发送prepare消息")
     
-    # 只有收到 pre-prepare 的机器人验证者才发送准备消息（不包括节点0主节点）
+    # 只有收到 pre-prepare 的机器人节点才发送准备消息
+    # 重要：根据PBFT协议，主节点（节点0）也需要发送prepare消息！
     print(f"准备发送prepare消息 - 机器人节点列表: {session['robot_nodes']}")
     for robot_id in session["robot_nodes"]:
-        if robot_id == 0:  # 提议者不发送准备消息
+        # 对齐论文 Theorem 1（式(4)(6) 的特例化）：prepare 由副本集合发出，主节点不发送 prepare
+        if robot_id == 0:
             continue
-        
-        # 检查是否收到 pre-prepare
+        # 检查是否收到 pre-prepare（主节点默认收到自己的pre-prepare）
         if not session["robot_node_states"][robot_id]["received_pre_prepare"]:
             print(f"节点 {robot_id} 未收到pre-prepare消息，不发送prepare")
             continue
@@ -1829,9 +2133,13 @@ async def handle_robot_prepare(session_id: str, robot_id: int, value: int):
                 target_sid = node_sockets[session_id][target_node_id]
                 await sio.emit('message_received', message, room=target_sid)
             
-            # 目标节点收到消息，更新其计数器
-            session["robot_node_states"][target_node_id]["received_prepare_count"] += 1
-            successful_count += 1
+            # 关键修复：只有目标节点收到了pre-prepare，才会接收和计数prepare消息
+            # 这符合PBFT协议：节点只有在收到pre-prepare后才会处理prepare消息
+            if session["robot_node_states"][target_node_id]["received_pre_prepare"]:
+                session["robot_node_states"][target_node_id]["received_prepare_count"] += 1
+                successful_count += 1
+            else:
+                print(f"    ⏭️  目标节点{target_node_id}未收到pre-prepare，不计数此prepare")
     
     print(f"  节点{robot_id}→其他节点: prepare {successful_count}/{len(session['robot_nodes'])-1}条成功")
     
@@ -1858,37 +2166,42 @@ async def check_robot_nodes_ready_for_commit(session_id: str):
     config = session["config"]
     n = config["nodeCount"]
     f = (n - 1) // 3
-    required_prepare = 2 * f  # 需要收到2f个准备消息
+    # 论文式(6)：单节点进入 V_p 的门限是“至少收到 2f 条来自其他节点的 prepare”
+    required_prepare = 2 * f
     
     # 判断是否为实验模式：所有节点都是机器人
     is_experiment_mode = config["robotNodes"] == config["nodeCount"]
     
     # 检查每个机器人节点是否收到足够的准备消息（包括主节点node 0）
-    print(f"检查机器人节点是否准备好发送commit - 需要{required_prepare}个prepare消息")
+    print(f"检查机器人节点是否准备好发送commit - 需要≥{required_prepare+1}个prepare消息（包括自己）")
     for robot_id in session["robot_nodes"]:
         robot_state = session["robot_node_states"][robot_id]
         
+        # 按论文门限，这里只看“来自其他节点”的 prepare 数量（received_prepare_count 本身就是这个口径）
+        total_prepare_count = robot_state["received_prepare_count"]
+
         # 打印每个节点的状态
-        print(f"节点 {robot_id}: 已收到 {robot_state['received_prepare_count']} 个prepare消息, 已发送commit: {robot_state['sent_commit']}")
+        print(
+            f"节点 {robot_id}: 收到 {total_prepare_count} 个prepare(来自其他节点), 已发送commit: {robot_state['sent_commit']}"
+        )
         
         # 如果已经发送过提交消息，跳过
         if robot_state["sent_commit"]:
             continue
         
-        # 检查是否收到足够的准备消息（所有节点包括主节点都需要收到超过2f个prepare）
-        # 注意：所有节点都是好节点，不会发错误信息
-        if robot_state["received_prepare_count"] > required_prepare:
+        # 检查是否收到足够的准备消息（按论文式(6)：≥2f）
+        if total_prepare_count >= required_prepare:
             if is_experiment_mode:
-                print(f"✅ 机器人节点 {robot_id} 收到足够的准备消息（{robot_state['received_prepare_count']}/{required_prepare}），立即发送提交消息（实验模式）")
+                print(f"✅ 机器人节点 {robot_id} prepare达标（{total_prepare_count}≥{required_prepare}），立即发送commit（实验模式）")
                 # 实验模式：立即发送，不使用异步延迟
                 await handle_robot_commit(session_id, robot_id, config["proposalValue"])
             else:
-                print(f"✅ 机器人节点 {robot_id} 收到足够的准备消息（{robot_state['received_prepare_count']}/{required_prepare}），将在10秒后发送提交消息（正常模式）")
+                print(f"✅ 机器人节点 {robot_id} prepare达标（{total_prepare_count}≥{required_prepare}），将在10秒后发送commit（正常模式）")
                 # 正常模式：延迟10秒发送
                 asyncio.create_task(schedule_robot_commit_with_delay(session_id, robot_id, config["proposalValue"]))
             robot_state["sent_commit"] = True
         else:
-            print(f"⏳ 机器人节点 {robot_id} 还未收到足够的准备消息（{robot_state['received_prepare_count']}/{required_prepare}），等待中...")
+            print(f"⏳ 机器人节点 {robot_id} prepare未达标（{total_prepare_count}<{required_prepare}），等待中...")
 
 async def schedule_robot_commit_with_delay(session_id: str, robot_id: int, value: int):
     """调度机器人节点发送提交消息（正常模式：延迟10秒）"""
@@ -1984,9 +2297,23 @@ async def handle_robot_commit(session_id: str, robot_id: int, value: int):
                 target_sid = node_sockets[session_id][target_node_id]
                 await sio.emit('message_received', message, room=target_sid)
             
-            # 目标节点收到消息，更新其计数器
-            session["robot_node_states"][target_node_id]["received_commit_count"] += 1
-            successful_count += 1
+            # 关键修复：只有目标节点收到了足够的prepare（即在V_p中），才会接收和计数commit消息
+            # 这符合PBFT协议：节点只有在prepare阶段达标后才会处理commit消息
+            n = config["nodeCount"]
+            f = (n - 1) // 3
+            # 标准PBFT阈值：需要>2f条prepare（即≥2f+1条）
+            required_prepare = 2 * f
+            # 论文式(6)：目标节点只有在 prepare 阶段“来自其他节点的prepare数 ≥ 2f”时，才接收并计数 commit
+            target_state = session["robot_node_states"][target_node_id]
+            total_prepare_count = target_state["received_prepare_count"]
+
+            if total_prepare_count >= required_prepare:
+                session["robot_node_states"][target_node_id]["received_commit_count"] += 1
+                successful_count += 1
+            else:
+                print(
+                    f"    ⏭️  目标节点{target_node_id}prepare未达标（{total_prepare_count}<{required_prepare}），不计数此commit"
+                )
     
     print(f"  节点{robot_id}→其他节点: commit {successful_count}/{len(session['robot_nodes'])-1}条成功")
     
