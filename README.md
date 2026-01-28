@@ -87,16 +87,45 @@ Fault model:
 
 ### B) Reliability experiment (p–success-rate curve)
 
-This mode measures how link reliability \(p\) impacts PBFT success probability under a **point-to-point independent link model** and compares:
+This mode measures how link reliability \(p\) impacts PBFT success probability and compares:
 - **Experimental**: backend Monte‑Carlo batch runs
 - **Theoretical**: backend enumeration derived from Theorem 1 (Eq. (1)–(6)) (shown as a dashed line)
 
 #### Definition (aligned with backend implementation)
 
-- **Link model**: each message on each directed link succeeds independently with probability \(p\) (`messageDeliveryRate` in 0–100%)
+- **Link model**: 
+  - **Full topology**: Direct point-to-point communication. Each link succeeds with probability \(p\) (`messageDeliveryRate` in 0–100%)
+  - **Star topology**: Center-edge (1 hop) or edge-edge through center (2 hops)
+  - **Ring topology**: 
+    - Adjacent nodes use direct link (1 hop)
+    - Non-adjacent nodes try **both directions** (clockwise + counterclockwise), success if **at least one** succeeds
+  - Each hop succeeds independently with probability \(p\)
 - **Per-node threshold**: in prepare/commit, a node requires \(\ge 2f\) successful messages **from other nodes**
 - **Success criterion (Metric A)**: number of commit-success nodes \(N_c \ge N - f\)
 - **Fault bound**: \(f=\lfloor (N-1)/3 \rfloor\)
+
+#### Theoretical calculation methods
+
+1. **Full topology**: Exact formula based on binomial probability distributions
+   - Direct point-to-point communication: \(P_{comm} = p\)
+   - No multi-hop routing considered
+
+2. **Multi-hop topologies**: Path-based reliability calculation
+   
+   **Star topology**:
+   - Center ↔ Edge: 1 direct path (1 hop), \(P_{comm} = p\)
+   - Edge ↔ Edge: 1 path through center (2 hops), \(P_{comm} = p^2\)
+   
+   **Ring topology**:
+   - Adjacent nodes: 1 direct path (1 hop), \(P_{comm} = p\)
+   - Non-adjacent nodes: 2 paths (clockwise + counterclockwise), at least one succeeds
+     - Example: node 0 → node 2, two paths: 0→1→2 and 0→3→2
+     - \(P_{comm} = 1 - (1-p^{k_1})(1-p^{k_2})\) where \(k_1, k_2\) are path lengths
+   
+   **Key insight**: 
+   - Ring topology benefits from redundant paths (both directions available)
+   - Star topology has no redundancy for edge-to-edge communication
+   - Fully connected topology remains most reliable (direct \(p\) for all pairs)
 
 #### How to run
 
@@ -159,6 +188,7 @@ distributed-pbft/
 
 ## Roadmap
 
+- [x] Multi-hop topology support with adjacency matrix power method
 - [ ] Support more consensus algorithms (Raft, Paxos, ...)
 - [ ] Add network delay + richer network fault models
 - [ ] Add replay/history viewer

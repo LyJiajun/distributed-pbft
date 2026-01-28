@@ -2,6 +2,105 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 确保 Element Plus primary 按钮始终显示正确的颜色 */
+.el-button--primary {
+  --el-button-bg-color: #409EFF !important;
+  --el-button-text-color: #ffffff !important;
+  --el-button-border-color: #409EFF !important;
+  background-color: #409EFF !important;
+  color: #ffffff !important;
+  border-color: #409EFF !important;
+}
+
+.el-button--primary:hover {
+  --el-button-hover-bg-color: #66b1ff !important;
+  --el-button-hover-text-color: #ffffff !important;
+  --el-button-hover-border-color: #66b1ff !important;
+  background-color: #66b1ff !important;
+  color: #ffffff !important;
+  border-color: #66b1ff !important;
+}
+
+.el-button--primary:active {
+  background-color: #3a8ee6 !important;
+  border-color: #3a8ee6 !important;
+}
+
+.el-button--primary:focus {
+  background-color: #409EFF !important;
+  border-color: #409EFF !important;
+}
+
+/* 禁用状态 */
+.el-button--primary.is-disabled,
+.el-button--primary.is-disabled:hover,
+.el-button--primary.is-disabled:focus,
+.el-button--primary.is-disabled:active {
+  background-color: #a0cfff !important;
+  border-color: #a0cfff !important;
+  color: #ffffff !important;
+}
+
+/* Success 按钮样式 */
+.el-button--success {
+  --el-button-bg-color: #67C23A !important;
+  --el-button-text-color: #ffffff !important;
+  --el-button-border-color: #67C23A !important;
+  background-color: #67C23A !important;
+  color: #ffffff !important;
+  border-color: #67C23A !important;
+}
+
+.el-button--success:hover {
+  background-color: #85ce61 !important;
+  border-color: #85ce61 !important;
+}
+
+/* Warning 按钮样式 */
+.el-button--warning {
+  --el-button-bg-color: #E6A23C !important;
+  --el-button-text-color: #ffffff !important;
+  --el-button-border-color: #E6A23C !important;
+  background-color: #E6A23C !important;
+  color: #ffffff !important;
+  border-color: #E6A23C !important;
+}
+
+.el-button--warning:hover {
+  background-color: #ebb563 !important;
+  border-color: #ebb563 !important;
+}
+
+/* Danger 按钮样式 */
+.el-button--danger {
+  --el-button-bg-color: #F56C6C !important;
+  --el-button-text-color: #ffffff !important;
+  --el-button-border-color: #F56C6C !important;
+  background-color: #F56C6C !important;
+  color: #ffffff !important;
+  border-color: #F56C6C !important;
+}
+
+.el-button--danger:hover {
+  background-color: #f78989 !important;
+  border-color: #f78989 !important;
+}
+
+/* Info 按钮样式 */
+.el-button--info {
+  --el-button-bg-color: #909399 !important;
+  --el-button-text-color: #ffffff !important;
+  --el-button-border-color: #909399 !important;
+  background-color: #909399 !important;
+  color: #ffffff !important;
+  border-color: #909399 !important;
+}
+
+.el-button--info:hover {
+  background-color: #a6a9ad !important;
+  border-color: #a6a9ad !important;
+}
+
 
 
 

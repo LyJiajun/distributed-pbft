@@ -42,6 +42,7 @@ class SessionConfig(BaseModel):
     maliciousProposer: bool
     allowTampering: bool
     messageDeliveryRate: int = 100
+    proposerId: Optional[int] = 0  # 主节点ID，默认为0
 
 class SessionInfo(BaseModel):
     sessionId: str
@@ -70,6 +71,29 @@ def create_session(config: SessionConfig) -> SessionInfo:
         'proposalValue': config.proposalValue
     })
     
+    # 计算最短路径（用于多跳路由）
+    shortest_paths = calculate_shortest_paths(
+        config.nodeCount, 
+        config.topology, 
+        config.branchCount
+    )
+    
+    # 打印路径信息用于调试
+    print(f"\n=== 拓扑路径信息 ===")
+    print(f"拓扑类型: {config.topology}, 节点数: {config.nodeCount}")
+    if config.topology != "full":
+        print(f"示例路径:")
+        sample_count = 0
+        for (src, dst), path in shortest_paths.items():
+            if sample_count < 5 and len(path) > 2:  # 只显示多跳路径
+                print(f"  节点{src}→节点{dst}: {' → '.join(map(str, path))} (跳数: {len(path)-1})")
+                sample_count += 1
+    print(f"总路径数: {len(shortest_paths)}")
+    print(f"===================\n")
+    
+    # 将元组键转换为字符串键以支持JSON序列化（但在Python中仍使用元组）
+    # 注意：这里不需要转换，因为session不会被JSON序列化，保持为字典
+    
     session = {
         "config": config.dict(),
         "status": "waiting",
@@ -90,6 +114,7 @@ def create_session(config: SessionConfig) -> SessionInfo:
         "node_states": {},
         "consensus_result": None,
         "consensus_history": [],  # 共识历史记录
+        "shortest_paths": shortest_paths,  # 缓存的最短路径
         "created_at": datetime.now().isoformat()
     }
     
@@ -128,77 +153,788 @@ def create_session(config: SessionConfig) -> SessionInfo:
 def get_session(session_id: str) -> Optional[Dict[str, Any]]:
     return sessions.get(session_id)
 
-def is_connection_allowed(i: int, j: int, n: int, topology: str, n_value: int) -> bool:
-    """检查两个节点之间是否允许连接"""
+def is_direct_connection(i: int, j: int, n: int, topology: str, n_value: int) -> bool:
+    """检查两个节点之间是否有直接物理连接（边）"""
     if i == j:
         return False
     if topology == "full":
         return True
     elif topology == "ring":
+        # 环形：双向连接，每个节点连接相邻节点
         return j == (i + 1) % n or j == (i - 1) % n
     elif topology == "star":
+        # 星形：中心节点(0)与所有节点双向连接
         return i == 0 or j == 0
     elif topology == "tree":
-        parent = (j - 1) // n_value
-        return i == parent and j < n
+        # 树形：父子节点双向连接
+        parent_of_j = (j - 1) // n_value
+        parent_of_i = (i - 1) // n_value
+        # i是j的父节点，或j是i的父节点
+        return (i == parent_of_j and j < n) or (j == parent_of_i and i < n)
     return False
 
-def is_honest(node_id: int, n: int, m: int, faulty_proposer: bool) -> bool:
-    """判断节点是否为诚实节点"""
+def calculate_shortest_paths(n: int, topology: str, n_value: int) -> Dict[tuple, List[int]]:
+    """使用Floyd-Warshall算法计算所有节点对之间的最短路径
+    
+    返回: {(src, dst): [path]} 例如 {(0, 2): [0, 1, 2]} 表示从0到2的路径是0→1→2
+    """
+    # 初始化距离矩阵和路径矩阵
+    INF = float('inf')
+    dist = [[INF] * n for _ in range(n)]
+    next_node = [[None] * n for _ in range(n)]
+    
+    # 初始化：自己到自己距离为0，直接连接的边距离为1
+    for i in range(n):
+        dist[i][i] = 0
+        for j in range(n):
+            if i != j and is_direct_connection(i, j, n, topology, n_value):
+                dist[i][j] = 1
+                next_node[i][j] = j
+    
+    # Floyd-Warshall算法
+    for k in range(n):
+        for i in range(n):
+            for j in range(n):
+                if dist[i][k] + dist[k][j] < dist[i][j]:
+                    dist[i][j] = dist[i][k] + dist[k][j]
+                    next_node[i][j] = next_node[i][k]
+    
+    # 重建路径
+    paths = {}
+    for i in range(n):
+        for j in range(n):
+            if i != j and dist[i][j] < INF:
+                path = [i]
+                current = i
+                while current != j:
+                    current = next_node[current][j]
+                    if current is None:
+                        break
+                    path.append(current)
+                if current == j:
+                    paths[(i, j)] = path
+    
+    return paths
+
+def is_connection_allowed(i: int, j: int, n: int, topology: str, n_value: int) -> bool:
+    """检查两个节点之间是否可以通信（直接或通过路由）
+    
+    在多跳路由模型中，只要存在路径就允许通信
+    """
+    if i == j:
+        return False
+    # 计算路径（会被缓存在session中）
+    paths = calculate_shortest_paths(n, topology, n_value)
+    return (i, j) in paths
+
+def is_honest(node_id: int, n: int, m: int, faulty_proposer: bool, proposer_id: int = 0) -> bool:
+    """判断节点是否为诚实节点
+    
+    Args:
+        node_id: 节点ID
+        n: 总节点数
+        m: 故障节点数
+        faulty_proposer: 主节点是否为恶意节点
+        proposer_id: 主节点ID，默认为0
+    """
     if m == 0:
         return True
     if faulty_proposer:
-        if node_id == 0:
+        if node_id == proposer_id:
             return False
         return node_id <= n - m
     else:
-        if node_id == 0:
+        if node_id == proposer_id:
             return True
         return node_id < n - m
 
+def try_path(session_id: str, path: list, delivery_rate: float) -> bool:
+    """尝试通过指定路径发送消息
+    
+    Args:
+        session_id: 会话ID
+        path: 路径列表，如 [0, 1, 2] 表示 0→1→2
+        delivery_rate: 链路可靠性（百分比）
+    
+    Returns:
+        bool: 路径是否成功
+    """
+    # 对路径上的每一跳进行可靠性检查
+    for i in range(len(path) - 1):
+        hop_from = path[i]
+        hop_to = path[i + 1]
+        
+        # 检查节点级别配置
+        hop_reliability = delivery_rate
+        if session_id in node_reliability:
+            if hop_from in node_reliability[session_id]:
+                if hop_to in node_reliability[session_id][hop_from]:
+                    hop_reliability = node_reliability[session_id][hop_from][hop_to]
+        
+        # 对这一跳进行可靠性检查
+        if random.random() * 100 >= hop_reliability:
+            # 这一跳失败
+            return False
+    
+    # 所有跳都成功
+    return True
+
+def get_ring_paths(from_node: int, to_node: int, n: int) -> list:
+    """获取环形拓扑中的两条路径（顺时针和逆时针）
+    
+    Args:
+        from_node: 起始节点
+        to_node: 目标节点
+        n: 总节点数
+    
+    Returns:
+        list: 路径列表，每个路径是节点ID的列表
+    """
+    if from_node == to_node:
+        return [[from_node]]
+    
+    # 顺时针路径
+    clockwise_path = [from_node]
+    current = from_node
+    while current != to_node:
+        current = (current + 1) % n
+        clockwise_path.append(current)
+    
+    # 逆时针路径
+    counterclockwise_path = [from_node]
+    current = from_node
+    while current != to_node:
+        current = (current - 1) % n
+        counterclockwise_path.append(current)
+    
+    return [clockwise_path, counterclockwise_path]
+
 def should_deliver_message(session_id: str, from_node: int = None, to_node: int = None) -> bool:
-    """根据消息传达概率决定是否发送消息
+    """根据消息传达概率决定是否发送消息（支持多跳路由和自定义矩阵）
+    
+    路由策略：
+    - 自定义矩阵：直接使用矩阵中的概率
+    - 星形拓扑：使用最短路径（1条）
+    - 环形拓扑：
+      * 相邻节点：使用最短路径（1条）
+      * 不相邻节点：尝试两条路径（顺时针+逆时针），至少一条成功即可
+    - 其他拓扑：使用最短路径（1条）
     
     优先级：
-    1. 如果指定了from_node和to_node，使用节点级别的可靠性配置
-    2. 否则使用全局的messageDeliveryRate
+    1. 如果有自定义矩阵，使用自定义矩阵中的概率
+    2. 如果指定了from_node和to_node，使用节点级别的可靠性配置
+    3. 否则使用全局的messageDeliveryRate
     """
     session = get_session(session_id)
     if not session:
         return True
     
-    # 优先使用节点级别的可靠性配置
-    if from_node is not None and to_node is not None:
-        if session_id in node_reliability:
-            if from_node in node_reliability[session_id]:
-                # 确保类型一致（都转换为整数）
-                from_node_int = int(from_node)
-                to_node_int = int(to_node)
+    # 如果没有指定from_node和to_node，使用全局配置
+    if from_node is None or to_node is None:
+        delivery_rate = session["config"].get("messageDeliveryRate", 100)
+        if delivery_rate >= 100:
+            return True
+        return random.random() * 100 < delivery_rate
+    
+    # 检查是否有自定义可靠度矩阵
+    custom_matrix = session.get("custom_reliability_matrix")
+    if custom_matrix is not None:
+        # 使用自定义矩阵中的概率
+        reliability = custom_matrix[from_node][to_node]
+        return random.random() < reliability
+    
+    config = session["config"]
+    topology = config.get("topology", "full")
+    n = config["nodeCount"]
+    delivery_rate = config.get("messageDeliveryRate", 100)
+    
+    # 全连接拓扑：直接通信
+    if topology == "full":
+        if delivery_rate >= 100:
+            return True
+        return random.random() * 100 < delivery_rate
+    
+    # 环形拓扑：特殊处理两条路径
+    if topology == "ring":
+        # 检查是否相邻
+        is_adjacent = (to_node == (from_node + 1) % n) or (to_node == (from_node - 1) % n)
+        
+        if is_adjacent:
+            # 相邻节点：只有1条路径
+            return random.random() * 100 < delivery_rate
+        else:
+            # 不相邻节点：有2条路径（顺时针+逆时针），至少一条成功
+            paths = get_ring_paths(from_node, to_node, n)
+            
+            # 尝试两条路径
+            path1_success = try_path(session_id, paths[0], delivery_rate)
+            path2_success = try_path(session_id, paths[1], delivery_rate)
+            
+            success = path1_success or path2_success
+            
+            if success and len(paths[0]) > 2:
+                if path1_success and path2_success:
+                    print(f"  ✅ 环形双路径成功: {from_node}→{to_node} (两条路径都成功)")
+                else:
+                    which = "顺时针" if path1_success else "逆时针"
+                    print(f"  ✅ 环形备用路径成功: {from_node}→{to_node} ({which}路径成功)")
+            elif not success and len(paths[0]) > 2:
+                print(f"  ❌ 环形双路径失败: {from_node}→{to_node} (两条路径都失败)")
+            
+            return success
+    
+    # 其他拓扑（星形、树形等）：使用最短路径
+    shortest_paths = session.get("shortest_paths", {})
+    path_key = (int(from_node), int(to_node))
+    
+    if path_key not in shortest_paths:
+        print(f"⚠️  节点{from_node}到节点{to_node}不可达")
+        return False
+    
+    path = shortest_paths[path_key]
+    success = try_path(session_id, path, delivery_rate)
+    
+    if success and len(path) > 2:
+        print(f"  ✅ 多跳成功: {from_node}→{to_node} 路径{path}")
+    elif not success and len(path) > 2:
+        print(f"  ❌ 多跳失败: {from_node}→{to_node} 路径{path}")
+    
+    return success
+
+def calculate_effective_reliability(n: int, topology: str, n_value: int, p: float) -> Dict[str, float]:
+    """计算不同拓扑下的有效传输可靠性（平均跳数近似法）
+    
+    返回: {
+        'avg_hops': 平均跳数,
+        'p_effective': 有效传输概率,
+        'max_hops': 最大跳数
+    }
+    """
+    # 计算最短路径
+    paths = calculate_shortest_paths(n, topology, n_value)
+    
+    if not paths:
+        return {'avg_hops': 1.0, 'p_effective': p, 'max_hops': 1}
+    
+    # 统计跳数
+    hop_counts = [len(path) - 1 for path in paths.values()]
+    avg_hops = sum(hop_counts) / len(hop_counts)
+    max_hops = max(hop_counts)
+    
+    # 有效传输概率：p^(平均跳数)
+    p_effective = p ** avg_hops
+    
+    return {
+        'avg_hops': avg_hops,
+        'p_effective': p_effective,
+        'max_hops': max_hops
+    }
+
+def build_adjacency_matrix(n: int, topology: str, n_value: int):
+    """构建邻接矩阵
+    
+    Args:
+        n: 节点数
+        topology: 拓扑类型
+        n_value: 分支数（用于树形拓扑）
+    
+    Returns:
+        n×n的邻接矩阵，A[i][j]=1表示i和j之间有直接连接
+    """
+    import numpy as np
+    A = np.zeros((n, n), dtype=int)
+    
+    for i in range(n):
+        for j in range(n):
+            if i != j and is_direct_connection(i, j, n, topology, n_value):
+                A[i][j] = 1
+    
+    return A
+
+def calculate_comm_reliability_matrix_shortest_path(n: int, topology: str, n_value: int, p: float):
+    """计算通信路径可靠性矩阵（正确的路径枚举方法）
+    
+    不同拓扑的路径策略：
+    - 星形拓扑：
+      * 中心↔边缘：1条路径（1跳），P_comm = p
+      * 边缘↔边缘：1条路径（2跳），P_comm = p²
+    - 环形拓扑：
+      * 相邻节点：1条路径（1跳），P_comm = p
+      * 不相邻节点：2条路径（顺时针+逆时针），P_comm = 1 - (1-p^k1) × (1-p^k2)
+    - 其他拓扑：使用最短路径，P_comm = p^k
+    
+    Args:
+        n: 节点数
+        topology: 拓扑类型
+        n_value: 分支数
+        p: 单链路成功概率
+    
+    Returns:
+        通信路径可靠性矩阵 P_comm[i,j]
+    """
+    import numpy as np
+    
+    # 初始化通信可靠性矩阵
+    P_comm = np.zeros((n, n))
+    np.fill_diagonal(P_comm, 1.0)
+    
+    if topology == "ring":
+        # 环形拓扑：考虑两条路径
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
                 
-                if to_node_int in node_reliability[session_id][from_node_int]:
-                    reliability = node_reliability[session_id][from_node_int][to_node_int]
-                    result = random.random() * 100 < reliability
-                    if not result:
-                        print(f"节点级别可靠性检查: 节点{from_node_int}->节点{to_node_int}, 可靠性{reliability}%, 结果: 丢弃")
-                    return result
+                # 计算两个方向的距离
+                clockwise = (j - i) % n
+                counterclockwise = (i - j) % n
+                
+                # 检查是否相邻
+                if min(clockwise, counterclockwise) == 1:
+                    # 相邻节点：只有1条路径
+                    P_comm[i,j] = p
+                else:
+                    # 不相邻节点：有2条路径
+                    p1 = p ** clockwise  # 顺时针路径成功概率
+                    p2 = p ** counterclockwise  # 逆时针路径成功概率
+                    # 至少一条成功
+                    P_comm[i,j] = 1 - (1 - p1) * (1 - p2)
     
-    # 否则使用全局配置
-    delivery_rate = session["config"].get("messageDeliveryRate", 100)
-    if delivery_rate >= 100:
-        return True
+    elif topology == "star":
+        # 星形拓扑：中心节点是0
+        center = 0
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                
+                if i == center or j == center:
+                    # 中心↔边缘：1跳
+                    P_comm[i,j] = p
+                else:
+                    # 边缘↔边缘：2跳（必须经过中心）
+                    P_comm[i,j] = p ** 2
     
-    # 生成随机数，如果小于传达概率则发送消息
-    return random.random() * 100 < delivery_rate
+    else:
+        # 其他拓扑：使用最短路径
+        shortest_paths = calculate_shortest_paths(n, topology, n_value)
+        
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                
+                path_key = (i, j)
+                if path_key in shortest_paths:
+                    path = shortest_paths[path_key]
+                    path_length = len(path) - 1
+                    P_comm[i, j] = p ** path_length
+                else:
+                    P_comm[i, j] = 0.0
+    
+    return P_comm
+
+def calculate_comm_reliability_matrix(A, p: float, max_path_length: int = None):
+    """使用邻接矩阵幂运算计算通信路径可靠性矩阵（考虑所有路径）
+    
+    基于论文推导：
+    1. A^k[i,j] 表示从节点i到节点j长度为k的路径数量
+    2. 单条长度为k的路径成功概率：p^k
+    3. N_ij(k)条长度为k的路径全部失败概率：(1 - p^k)^N_ij(k)
+    4. 所有路径均失败概率：∏[k=1 to n-1] (1 - p^k)^A^k[i,j]
+    5. 通信路径可靠性：P_comm(i,j) = 1 - ∏[k=1 to n-1] (1 - p^k)^A^k[i,j]
+    
+    注意：此函数考虑所有可能的路径，包括最短路径和绕路。
+          在实际系统中，通常只使用最短路径，请使用 calculate_comm_reliability_matrix_shortest_path
+    
+    Args:
+        A: 邻接矩阵（numpy数组）
+        p: 单链路成功概率
+        max_path_length: 最大路径长度（默认为n-1）
+    
+    Returns:
+        通信路径可靠性矩阵 P_comm[i,j]
+    """
+    import numpy as np
+    
+    n = A.shape[0]
+    if max_path_length is None:
+        max_path_length = n - 1
+    
+    # 初始化通信失败概率矩阵（初始为1，表示必然失败）
+    P_fail = np.ones((n, n))
+    
+    # 对角线元素设为0（自己到自己不需要通信）
+    np.fill_diagonal(P_fail, 0)
+    
+    # 当前的邻接矩阵幂（A^k）
+    A_power = A.copy()
+    
+    # 遍历所有可能的路径长度k = 1, 2, ..., n-1
+    for k in range(1, max_path_length + 1):
+        # 单条长度为k的路径成功概率
+        p_k = p ** k
+        
+        # 对每个节点对(i,j)
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                
+                # 长度为k的路径数量
+                N_ij_k = A_power[i, j]
+                
+                if N_ij_k > 0:
+                    # 所有长度为k的路径均失败的概率：(1 - p^k)^N_ij(k)
+                    fail_prob_k = (1 - p_k) ** N_ij_k
+                    
+                    # 累乘到总失败概率
+                    P_fail[i, j] *= fail_prob_k
+        
+        # 计算A^(k+1) = A^k * A
+        if k < max_path_length:
+            A_power = np.matmul(A_power, A)
+    
+    # 通信路径可靠性 = 1 - 失败概率
+    P_comm = 1 - P_fail
+    
+    return P_comm
+
+
+def calc_exact_receive_k_prob(senders, target, k_min, P_comm):
+    """计算目标节点从发送者集合中至少收到k_min条消息的概率
+    
+    Args:
+        senders: 发送者节点ID列表
+        target: 目标节点ID
+        k_min: 需要接收的最小消息数
+        P_comm: 通信可靠性矩阵 (numpy数组，n×n)
+    
+    Returns:
+        至少收到k_min条消息的概率
+    """
+    from itertools import combinations
+    
+    # 过滤掉目标节点自己（不能给自己发消息）
+    valid_senders = [s for s in senders if s != target]
+    
+    if k_min <= 0:
+        return 1.0
+    if k_min > len(valid_senders):
+        return 0.0
+    
+    total_prob = 0.0
+    
+    # 枚举所有可能收到消息的子集，大小>=k_min
+    for k in range(k_min, len(valid_senders) + 1):
+        for subset in combinations(valid_senders, k):
+            # 计算这个子集的概率：subset中的节点成功发送，其余节点失败
+            prob = 1.0
+            for sender in valid_senders:
+                if sender in subset:
+                    # 成功发送
+                    prob *= P_comm[sender, target]
+                else:
+                    # 失败
+                    prob *= (1 - P_comm[sender, target])
+            total_prob += prob
+    
+    return total_prob
+
+def calculate_theoretical_success_rate_custom_matrix(n: int, f: int, P_comm, proposer_id: int = 0) -> float:
+    """使用自定义可靠度矩阵计算PBFT共识的理论成功概率
+    
+    Args:
+        n: 节点数
+        f: 容错数
+        P_comm: 自定义的通信可靠性矩阵 (numpy数组或列表，n×n)
+        proposer_id: 主节点ID，默认为0
+    
+    Returns:
+        理论成功率
+    """
+    from math import comb
+    from itertools import combinations
+    import numpy as np
+    
+    # 确保P_comm是numpy数组
+    if not isinstance(P_comm, np.ndarray):
+        P_comm = np.array(P_comm)
+    
+    print(f"\n=== 自定义矩阵理论计算 ===")
+    print(f"节点数: {n}, 容错数: {f}, 主节点: {proposer_id}")
+    print(f"使用自定义P_comm矩阵")
+    
+    # 显示部分通信可靠性
+    print(f"\nP_comm矩阵（部分）:")
+    for i in range(min(3, n)):
+        for j in range(min(3, n)):
+            if i != j:
+                print(f"  P_comm({i},{j}) = {P_comm[i,j]:.4f}")
+    
+    nc_required = n - f  # 成功阈值
+    k_prepare = 2 * f - 1   # prepare阶段门限：从其他节点收到2f-1条（加自己=2f）
+    k_commit = 2 * f        # commit阶段门限：从其他节点收到2f条（加自己=2f+1）
+    
+    # 构建副本节点列表（所有节点除了主节点）
+    replica_nodes = [i for i in range(n) if i != proposer_id]
+    
+    total_prob = 0.0
+    
+    # ========== Pre-prepare阶段 ==========
+    # 枚举所有可能的V_pp配置（主节点 + x-1个副本）
+    for x in range(nc_required, n + 1):
+        for v_pp_replicas in combinations(replica_nodes, x - 1):
+            # 计算这个V_pp配置的概率
+            p_this_vpp = 1.0
+            for replica in replica_nodes:
+                if replica in v_pp_replicas:
+                    p_this_vpp *= P_comm[proposer_id, replica]
+                else:
+                    p_this_vpp *= (1 - P_comm[proposer_id, replica])
+            
+            if p_this_vpp < 1e-15:
+                continue
+            
+            v_pp_nodes = [proposer_id] + list(v_pp_replicas)
+            
+            # ========== Prepare阶段 ==========
+            for y in range(nc_required, min(x, n) + 1):
+                for v_p_nodes in combinations(v_pp_nodes, y):
+                    # 计算每个节点收到足够prepare的概率
+                    p_this_vp_given_vpp = 1.0
+                    
+                    # prepare的发送者：主节点不发送prepare
+                    prepare_senders = [node for node in v_pp_nodes if node != proposer_id]
+                    
+                    for target in v_pp_nodes:
+                        if target in v_p_nodes:
+                            # 该节点需要收到≥k_prepare个prepare
+                            p_target_receive_k = calc_exact_receive_k_prob(
+                                prepare_senders, target, k_prepare, P_comm
+                            )
+                            p_this_vp_given_vpp *= p_target_receive_k
+                        else:
+                            # 该节点未收到足够的prepare
+                            p_target_receive_k = calc_exact_receive_k_prob(
+                                prepare_senders, target, k_prepare, P_comm
+                            )
+                            p_this_vp_given_vpp *= (1 - p_target_receive_k)
+                    
+                    if p_this_vp_given_vpp < 1e-15:
+                        continue
+                    
+                    # ========== Commit阶段 ==========
+                    for z in range(nc_required, min(y, n) + 1):
+                        for v_c_nodes in combinations(v_p_nodes, z):
+                            # commit的发送者：v_p_nodes中的所有节点
+                            commit_senders = list(v_p_nodes)
+                            
+                            p_this_vc_given_vp = 1.0
+                            
+                            for target in v_p_nodes:
+                                if target in v_c_nodes:
+                                    # 需要收到≥k_commit个commit
+                                    p_target_receive_k = calc_exact_receive_k_prob(
+                                        commit_senders, target, k_commit, P_comm
+                                    )
+                                    p_this_vc_given_vp *= p_target_receive_k
+                                else:
+                                    p_target_receive_k = calc_exact_receive_k_prob(
+                                        commit_senders, target, k_commit, P_comm
+                                    )
+                                    p_this_vc_given_vp *= (1 - p_target_receive_k)
+                            
+                            if p_this_vc_given_vp < 1e-15:
+                                continue
+                            
+                            # 如果|V_c| >= n-f，则成功
+                            if len(v_c_nodes) >= nc_required:
+                                total_prob += p_this_vpp * p_this_vp_given_vpp * p_this_vc_given_vp
+    
+    print(f"理论成功率（自定义矩阵，精确计算）: {total_prob:.6f}\n")
+    return total_prob
+
+def calculate_theoretical_success_rate_multihop(n: int, f: int, topology: str, n_value: int, p: float, proposer_id: int = 0) -> float:
+    """计算多跳拓扑下PBFT共识的理论成功概率（精确计算，使用真实P_comm矩阵）
+    
+    方法：不使用平均P_comm的简化，而是对每对节点使用真实的通信可靠性P_comm[i,j]
+    
+    按照伪代码Line 8：所有诚实节点（包括主节点）都广播PREPARE
+    
+    路径策略：
+    - 星形拓扑：中心↔边缘 P_comm=p，边缘↔边缘 P_comm=p²
+    - 环形拓扑：相邻 P_comm=p，不相邻 P_comm=1-(1-p^k1)(1-p^k2)
+    
+    Args:
+        n: 节点总数
+        f: 容错数
+        topology: 拓扑类型
+        n_value: 分支数
+        p: 单链路成功概率
+        proposer_id: 主节点ID，默认为0
+    
+    Returns:
+        理论成功率
+    """
+    from math import comb
+    from itertools import combinations
+    import numpy as np
+    
+    # 计算通信路径可靠性矩阵
+    P_comm = calculate_comm_reliability_matrix_shortest_path(n, topology, n_value, p)
+    
+    print(f"\n=== 多跳拓扑理论计算（{topology}拓扑，精确方法） ===")
+    print(f"节点数: {n}, 容错数: {f}, 链路可靠性: {p:.3f}, 主节点: {proposer_id}")
+    print(f"使用精确P_comm矩阵，不使用平均近似")
+    
+    # 显示部分通信可靠性
+    print(f"\nP_comm矩阵（部分）:")
+    for i in range(min(3, n)):
+        for j in range(min(3, n)):
+            if i != j:
+                print(f"  P_comm({i},{j}) = {P_comm[i,j]:.4f}")
+    
+    nc_required = n - f  # 成功阈值
+    k_prepare = 2 * f - 1   # prepare阶段门限：从其他节点收到2f-1条（加自己=2f）
+    k_commit = 2 * f        # commit阶段门限：从其他节点收到2f条（加自己=2f+1）
+    
+    # 构建副本节点列表（所有节点除了主节点）
+    replica_nodes = [i for i in range(n) if i != proposer_id]
+    
+    total_prob = 0.0
+    
+    # ========== Pre-prepare阶段 ==========
+    # 枚举所有可能的V_pp配置（主节点 + x-1个副本）
+    for x in range(nc_required, n + 1):
+        # 枚举所有x-1个副本的组合
+        for v_pp_replicas in combinations(replica_nodes, x - 1):
+            # 计算这个V_pp配置的概率
+            p_this_vpp = 1.0
+            for replica in replica_nodes:
+                if replica in v_pp_replicas:
+                    p_this_vpp *= P_comm[proposer_id, replica]  # 收到pre-prepare
+                else:
+                    p_this_vpp *= (1 - P_comm[proposer_id, replica])  # 未收到
+            
+            if p_this_vpp < 1e-15:
+                continue
+            
+            # V_pp = {proposer_id} ∪ v_pp_replicas
+            v_pp_nodes = [proposer_id] + list(v_pp_replicas)
+            
+            # ========== Prepare阶段 ==========
+            # 主节点不发送prepare，只有副本互相发送
+            
+            # 对于V_pp中的每个节点，计算它收到≥k_prepare条prepare的概率
+            # 使用精确的P_comm[i,j]
+            
+            # 副本节点发送prepare（主节点不发送）
+            prepare_senders = [node for node in v_pp_nodes if node != proposer_id]
+            
+            # 计算每个节点能否进入V_p（收到≥k_prepare条prepare）
+            # 使用动态规划或枚举所有可能的消息传递情况
+            
+            # 简化但仍精确的方法：对每个节点，计算从prepare_senders收到≥k_prepare条的概率
+            node_enter_vp_prob = {}
+            
+            for target_node in v_pp_nodes:
+                # 该节点从prepare_senders中收到消息
+                senders_to_this_node = [s for s in prepare_senders if s != target_node]
+                
+                if len(senders_to_this_node) < k_prepare:
+                    node_enter_vp_prob[target_node] = 0.0
+                else:
+                    # 计算收到≥k_prepare条消息的概率
+                    # 枚举所有可能的k条成功组合
+                    prob_ge_k = 0.0
+                    for num_success in range(k_prepare, len(senders_to_this_node) + 1):
+                        for success_set in combinations(senders_to_this_node, num_success):
+                            prob_this_case = 1.0
+                            for sender in senders_to_this_node:
+                                if sender in success_set:
+                                    prob_this_case *= P_comm[sender, target_node]
+                                else:
+                                    prob_this_case *= (1 - P_comm[sender, target_node])
+                            prob_ge_k += prob_this_case
+                    
+                    node_enter_vp_prob[target_node] = prob_ge_k
+            
+            # 枚举V_p的所有可能配置（V_p ⊆ V_pp）
+            for y in range(nc_required, x + 1):
+                for v_p_nodes_tuple in combinations(v_pp_nodes, y):
+                    v_p_nodes = list(v_p_nodes_tuple)
+                    
+                    # 计算这个V_p配置的概率
+                    p_this_vp_given_vpp = 1.0
+                    for node in v_pp_nodes:
+                        if node in v_p_nodes:
+                            p_this_vp_given_vpp *= node_enter_vp_prob[node]
+                        else:
+                            p_this_vp_given_vpp *= (1 - node_enter_vp_prob[node])
+                    
+                    if p_this_vp_given_vpp < 1e-15:
+                        continue
+                    
+                    # ========== Commit阶段 ==========
+                    # V_p中的所有节点互相发送commit
+                    commit_senders = v_p_nodes
+                    
+                    # 计算每个节点能否进入V_c（收到≥k_commit条commit）
+                    node_enter_vc_prob = {}
+                    
+                    for target_node in v_p_nodes:
+                        senders_to_this_node = [s for s in commit_senders if s != target_node]
+                        
+                        if len(senders_to_this_node) < k_commit:
+                            node_enter_vc_prob[target_node] = 0.0
+                        else:
+                            prob_ge_k = 0.0
+                            for num_success in range(k_commit, len(senders_to_this_node) + 1):
+                                for success_set in combinations(senders_to_this_node, num_success):
+                                    prob_this_case = 1.0
+                                    for sender in senders_to_this_node:
+                                        if sender in success_set:
+                                            prob_this_case *= P_comm[sender, target_node]
+                                        else:
+                                            prob_this_case *= (1 - P_comm[sender, target_node])
+                                    prob_ge_k += prob_this_case
+                            
+                            node_enter_vc_prob[target_node] = prob_ge_k
+                    
+                    # 计算|V_c| >= nc_required的概率
+                    # 枚举所有可能的V_c配置
+                    p_success_given_vp = 0.0
+                    for z in range(nc_required, y + 1):
+                        for v_c_nodes_tuple in combinations(v_p_nodes, z):
+                            v_c_nodes = list(v_c_nodes_tuple)
+                            
+                            p_this_vc_given_vp = 1.0
+                            for node in v_p_nodes:
+                                if node in v_c_nodes:
+                                    p_this_vc_given_vp *= node_enter_vc_prob[node]
+                                else:
+                                    p_this_vc_given_vp *= (1 - node_enter_vc_prob[node])
+                            
+                            p_success_given_vp += p_this_vc_given_vp
+                    
+                    total_prob += p_this_vpp * p_this_vp_given_vpp * p_success_given_vp
+    
+    print(f"理论成功率（精确计算，使用真实P_comm）: {total_prob:.6f}")
+    print(f"=" * 50)
+    
+    return total_prob
 
 def calculate_theoretical_success_rate(n: int, f: int, p: float) -> float:
     """计算PBFT共识的理论成功概率（口径A：N_c ≥ N − f）
 
-    严格对齐论文 Theorem 1（式(1)–(6)）在以下特例下的闭式化简：
+    严格对齐论文 Theorem 1（式(1)–(6)）和伪代码Algorithm 1在以下特例下的闭式化简：
     - 全连接网络
     - 所有节点在线（P(V_node)=1）
     - 同质链路：p^L_{i,j} = p
     - n 给定，f = floor((n-1)/3)
     - 成功判据：commit 成功节点数 N_c ≥ N − f
+    - 按照伪代码Line 8：所有诚实节点（包括主节点）都广播PREPARE
 
     注意：单节点在 prepare/commit 阶段的门限来自式(6)：至少收到 2f 条成功消息（来自其他节点）。
     """
@@ -222,7 +958,8 @@ def calculate_theoretical_success_rate(n: int, f: int, p: float) -> float:
     # 口径A：最终成功要求 N_c >= N - f
     nc_required = n - f
     # 论文式(6)中使用的“至少收到2f条成功消息”（来自其他节点）
-    k_required = 2 * f
+    k_prepare = 2 * f - 1   # prepare阶段：从其他节点收到2f-1条（加自己=2f）
+    k_commit = 2 * f        # commit阶段：从其他节点收到2f条（加自己=2f+1）
 
     total_prob = 0.0
 
@@ -235,10 +972,11 @@ def calculate_theoretical_success_rate(n: int, f: int, p: float) -> float:
             continue
 
         # prepare：给定 N_pp = x
+        # 主节点不发送prepare，只有副本发送
         # 主节点从 x-1 个副本收到 prepare，需 >=2f
-        q0 = binom_tail_ge(x - 1, k_required, p)
+        q0 = binom_tail_ge(x - 1, k_prepare, p)
         # 副本从其余 (x-2) 个副本收到 prepare，需 >=2f
-        q1 = binom_tail_ge(x - 2, k_required, p)
+        q1 = binom_tail_ge(x - 2, k_prepare, p)
 
         # 枚举 N_p = y（也必须 >= nc_required，且 y <= x）
         for y in range(nc_required, x + 1):
@@ -255,13 +993,93 @@ def calculate_theoretical_success_rate(n: int, f: int, p: float) -> float:
 
             # commit：给定 N_p = y
             # 节点从其他 y-1 个节点收到 commit，需 >=2f
-            q2 = binom_tail_ge(y - 1, k_required, p)
+            q2 = binom_tail_ge(y - 1, k_commit, p)
             # P(N_c >= N-f | N_p = y)
             p_c_ge = sum(binom_prob(y, z, q2) for z in range(nc_required, y + 1))
 
             total_prob += p_pp * p_p_y_given_x * p_c_ge
 
     return total_prob
+
+
+def calculate_theoretical_success_rate_paper_simulation(n: int, f: int, p: float) -> float:
+    """使用论文的逐阶段淘汰仿真模型计算PBFT共识成功概率
+    
+    论文方法（第10页）：
+    "In P-L models, a link failure leads to the failure in the corresponding 
+    communication phase, and only the live nodes enter the next round of consensus"
+    
+    关键特征：
+    1. 每个阶段后，只有成功的节点（收到足够消息的节点）进入下一阶段
+    2. 下一阶段的通信只在"存活"节点之间进行
+    3. 最终判断：存活节点数 ≥ n-f 则成功
+    
+    这个模型更接近论文的红×仿真结果
+    """
+    from math import comb
+    
+    def binom_prob(n_trials: int, k_success: int, prob: float) -> float:
+        if k_success > n_trials or k_success < 0:
+            return 0.0
+        return comb(n_trials, k_success) * (prob ** k_success) * ((1 - prob) ** (n_trials - k_success))
+    
+    def binom_tail_ge(m: int, k: int, prob: float) -> float:
+        """二项分布尾概率 P(X ≥ k)"""
+        if k <= 0:
+            return 1.0
+        if m < 0:
+            return 0.0
+        if k > m:
+            return 0.0
+        return sum(binom_prob(m, i, prob) for i in range(k, m + 1))
+    
+    nc_required = n - f
+    k_prepare = 2 * f - 1  # prepare门限：从其他节点收到2f-1条（加自己=2f）
+    k_commit = 2 * f       # commit门限：从其他节点收到2f条（加自己=2f+1）
+    
+    total_prob = 0.0
+    
+    # ========== Phase 1: Pre-prepare ==========
+    # 主节点始终在V_pp，n-1个副本中x-1个收到pre-prepare消息
+    for x in range(nc_required, n + 1):
+        p_pp = binom_prob(n - 1, x - 1, p)
+        if p_pp < 1e-15:
+            continue
+        
+        # ========== Phase 2: Prepare（只有V_pp中的x个节点参与）==========
+        # 在V_pp的x个节点中，每个节点需要收到≥k_prepare条prepare消息才能"存活"进入V_p
+        # 
+        # 主节点：从x-1个副本节点收到prepare
+        q_primary_survives = binom_tail_ge(x - 1, k_prepare, p)
+        # 副本节点：从x-2个其他节点收到prepare（不包括自己，主节点不发prepare）
+        q_replica_survives = binom_tail_ge(x - 2, k_prepare, p)
+        
+        # 枚举进入V_p的"存活"节点数y
+        for y in range(nc_required, x + 1):
+            # 计算P(|V_p| = y | |V_pp| = x)
+            # 情况1：主节点存活 + (y-1)个副本存活
+            case1 = q_primary_survives * binom_prob(x - 1, y - 1, q_replica_survives)
+            # 情况2：主节点未存活 + y个副本存活  
+            case2 = (1 - q_primary_survives) * binom_prob(x - 1, y, q_replica_survives)
+            p_vp_given_vpp = case1 + case2
+            
+            if p_vp_given_vpp < 1e-15:
+                continue
+            
+            # ========== Phase 3: Commit（只有V_p中的y个"存活"节点参与）==========
+            # 在V_p的y个节点中，每个节点需要收到≥k_commit条commit消息才能"存活"进入V_c
+            # 每个节点从其他y-1个节点收到commit
+            q_node_commits = binom_tail_ge(y - 1, k_commit, p)
+            
+            # 计算P(|V_c| ≥ nc_required | |V_p| = y)
+            # 这是y个节点中有≥nc_required个成功完成commit的概率
+            p_vc_success = sum(binom_prob(y, z, q_node_commits) for z in range(nc_required, y + 1))
+            
+            # 累加概率
+            total_prob += p_pp * p_vp_given_vpp * p_vc_success
+    
+    return total_prob
+
 
 # HTTP路由
 @app.post("/api/sessions")
@@ -413,7 +1231,7 @@ async def reset_round(session_id: str):
             "proposalValue": session["config"]["proposalValue"]
         }, room=session_id)
         
-        # 主节点（节点0）发送pre-prepare
+        # 主节点发送pre-prepare
         await robot_send_pre_prepare(session_id)
     
     return {
@@ -422,13 +1240,18 @@ async def reset_round(session_id: str):
         "phase": session["phase"]
     }
 
+class BatchExperimentRequest(BaseModel):
+    rounds: int = 30
+    customReliabilityMatrix: Optional[List[List[float]]] = None  # 自定义可靠度矩阵
+    averageDirectReliability: Optional[float] = None  # 平均直连可靠度
+
 @app.post("/api/sessions/{session_id}/run-batch-experiment")
-async def run_batch_experiment(session_id: str, rounds: int = 30):
+async def run_batch_experiment(session_id: str, request: BatchExperimentRequest):
     """批量运行多轮实验，完成后一次性返回所有结果
     
     Args:
         session_id: 会话ID
-        rounds: 实验轮数
+        request: 包含实验轮数和可选的自定义可靠度矩阵
     
     Returns:
         {
@@ -437,6 +1260,12 @@ async def run_batch_experiment(session_id: str, rounds: int = 30):
             "experimentalSuccessRate": 0.83  # 实验成功率
         }
     """
+    print(f"\n[DEBUG] run_batch_experiment 收到请求:")
+    print(f"  - session_id: {session_id}")
+    print(f"  - rounds: {request.rounds}")
+    print(f"  - customReliabilityMatrix: {'有' if request.customReliabilityMatrix else '无'}")
+    print(f"  - averageDirectReliability: {request.averageDirectReliability}")
+    
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -445,11 +1274,97 @@ async def run_batch_experiment(session_id: str, rounds: int = 30):
     n = config["nodeCount"]
     f = (n - 1) // 3
     p = config["messageDeliveryRate"] / 100.0  # 转换为概率
+    topology = config["topology"]
+    n_value = config.get("branchCount", 2)
+    proposer_id = config.get("proposerId", 0)  # 获取主节点ID
+    rounds = request.rounds
+    custom_matrix = request.customReliabilityMatrix
+    
+    # 如果提供了自定义矩阵，将其存储到session中用于实验
+    if custom_matrix:
+        import numpy as np
+        # 验证矩阵维度
+        if len(custom_matrix) != n or any(len(row) != n for row in custom_matrix):
+            raise HTTPException(status_code=400, detail=f"自定义矩阵维度错误，应为{n}x{n}")
+        
+        # 转换为numpy数组
+        P_comm_custom = np.array(custom_matrix)
+        session["custom_reliability_matrix"] = P_comm_custom.tolist()
+        
+        print(f"使用自定义可靠度矩阵：")
+        print(f"  矩阵维度: {n}x{n}")
+        print(f"  平均可靠度: {np.mean([P_comm_custom[i][j] for i in range(n) for j in range(n) if i != j]):.4f}")
+    else:
+        session["custom_reliability_matrix"] = None
     
     # 计算理论成功率
-    theoretical_rate = calculate_theoretical_success_rate(n, f, p)
+    avg_reliability_theoretical = None  # 基于平均直连可靠度的理论值
     
-    print(f"开始批量实验：{rounds}轮，n={n}, f={f}, p={p}, 理论成功率={theoretical_rate:.4f}")
+    if custom_matrix:
+        # 使用自定义矩阵计算理论成功率
+        import numpy as np
+        P_comm_custom = np.array(custom_matrix)
+        theoretical_rate = calculate_theoretical_success_rate_custom_matrix(n, f, P_comm_custom, proposer_id)
+        print(f"开始批量实验：{rounds}轮，n={n}, f={f}, 主节点={proposer_id}, 使用自定义可靠度矩阵")
+        print(f"  理论成功率={theoretical_rate:.4f} (基于自定义矩阵的精确计算)")
+        
+        # 如果提供了平均直连可靠度，计算对应的理论值
+        if request.averageDirectReliability is not None:
+            avg_p = request.averageDirectReliability
+            print(f"  平均直连可靠度={avg_p:.4f}")
+            
+            # 使用平均可靠度计算理论成功率
+            if topology == "full":
+                avg_reliability_theoretical = calculate_theoretical_success_rate(n, f, avg_p) * 100
+            else:
+                avg_reliability_theoretical = calculate_theoretical_success_rate_multihop(n, f, topology, n_value, avg_p, proposer_id) * 100
+            
+            print(f"  平均可靠度理论成功率={avg_reliability_theoretical:.4f}% (用于对比)")
+    elif topology == "full":
+        # 全连接拓扑：使用精确公式
+        theoretical_rate = calculate_theoretical_success_rate(n, f, p)
+        print(f"开始批量实验：{rounds}轮，n={n}, f={f}, p={p}, 拓扑={topology}")
+        print(f"  理论成功率={theoretical_rate:.4f} (精确计算)")
+    else:
+        # 其他拓扑：使用正确的路径策略计算理论成功率
+        try:
+            import numpy as np
+            
+            # 使用正确的路径策略计算理论成功率
+            # - 星形：中心↔边缘1跳，边缘↔边缘2跳
+            # - 环形：相邻1跳，不相邻尝试两个方向
+            theoretical_rate = calculate_theoretical_success_rate_multihop(n, f, topology, n_value, p, proposer_id)
+            
+            # 同时计算平均跳数等统计信息（用于日志）
+            topo_stats = calculate_effective_reliability(n, topology, n_value, p)
+            avg_hops = topo_stats['avg_hops']
+            max_hops = topo_stats['max_hops']
+            
+            print(f"开始批量实验：{rounds}轮，n={n}, f={f}, p={p:.2f}, 拓扑={topology}, 主节点={proposer_id}")
+            print(f"  平均跳数={avg_hops:.2f}, 最大跳数={max_hops}")
+            print(f"  理论成功率={theoretical_rate:.4f} (基于路径策略的精确计算)")
+        except ImportError:
+            print("警告：numpy未安装，回退到平均跳数近似法")
+            # 回退到平均跳数近似法
+            topo_stats = calculate_effective_reliability(n, topology, n_value, p)
+            p_eff = topo_stats['p_effective']
+            avg_hops = topo_stats['avg_hops']
+            max_hops = topo_stats['max_hops']
+            
+            theoretical_rate = calculate_theoretical_success_rate(n, f, p_eff)
+            
+            print(f"开始批量实验：{rounds}轮，n={n}, f={f}, p={p:.2f}, 拓扑={topology}")
+            print(f"  平均跳数={avg_hops:.2f}, 最大跳数={max_hops}, 有效可靠性={p_eff:.4f}")
+            print(f"  理论成功率={theoretical_rate:.4f} (平均跳数近似法)")
+        except Exception as e:
+            print(f"错误：多跳理论计算失败 - {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # 回退到平均跳数近似法
+            topo_stats = calculate_effective_reliability(n, topology, n_value, p)
+            p_eff = topo_stats['p_effective']
+            theoretical_rate = calculate_theoretical_success_rate(n, f, p_eff)
+            print(f"  回退到平均跳数近似法，理论成功率={theoretical_rate:.4f}")
     
     # 存储所有轮次的结果
     all_results = []
@@ -541,7 +1456,7 @@ async def run_batch_experiment(session_id: str, rounds: int = 30):
     
     print(f"批量实验完成：成功{success_count}/{len(all_results)}轮，实验成功率={experimental_rate:.4f}，理论成功率={theoretical_rate:.4f}")
     
-    return {
+    response_data = {
         "results": all_results,
         "theoreticalSuccessRate": round(theoretical_rate * 100, 2),  # 转换为百分比
         "experimentalSuccessRate": round(experimental_rate * 100, 2),
@@ -549,6 +1464,13 @@ async def run_batch_experiment(session_id: str, rounds: int = 30):
         "successCount": success_count,
         "failureCount": len(all_results) - success_count
     }
+    
+    # 如果有平均可靠度理论值，添加到返回结果
+    if avg_reliability_theoretical is not None:
+        response_data["averageReliabilityTheoretical"] = round(avg_reliability_theoretical, 2)
+        print(f"  平均可靠度理论成功率={avg_reliability_theoretical:.2f}%")
+    
+    return response_data
 
 @app.post("/api/sessions/{session_id}/assign-node")
 async def assign_node(session_id: str):
@@ -569,12 +1491,13 @@ async def assign_node(session_id: str):
             break
     
     if available_node is None:
-        raise HTTPException(status_code=409, detail="所有节点已被占用")
+        raise HTTPException(status_code=409, detail="All nodes are occupied")
     
+    proposer_id = session["config"].get("proposerId", 0)
     return {
         "nodeId": available_node,
         "sessionId": session_id,
-        "role": "提议者" if available_node == 0 else "验证者",
+        "role": "Proposer" if available_node == proposer_id else "Validator",
         "totalNodes": total_nodes,
         "connectedNodes": len(connected)
     }
@@ -1177,8 +2100,9 @@ async def choose_normal_consensus(sid, data):
     
     # 根据当前阶段自动发送消息
     config = session["config"]
+    proposer_id = config.get("proposerId", 0)
     
-    if session["phase"] == "prepare" and node_id != 0:
+    if session["phase"] == "prepare" and node_id != proposer_id:
         # 在准备阶段且不是主节点，发送准备消息
         # 标记为即将发送，防止robot_send_prepare_messages重复发送
         session["robot_node_states"][node_id]["sent_prepare"] = True
@@ -1355,8 +2279,8 @@ async def check_prepare_phase(session_id: str):
     # 注意：在实验模式下，所有节点都是好节点，不会发错误信息
     n = config["nodeCount"]
     f = (n - 1) // 3
-    required_correct_messages = 2 * f  # 需要2f个正确消息（超过2f即可）
-    primary_required = 2 * f  # 主节点也需要收到2f个正确prepare消息
+    required_correct_messages = 2 * f - 1  # 需要2f-1个正确消息（加自己=2f）
+    primary_required = 2 * f - 1  # 主节点需要收到2f-1个正确prepare消息（加自己=2f）
     
     # 统计发送正确信息的不同节点（value=0）
     correct_nodes = set()
@@ -1458,7 +2382,7 @@ async def check_commit_phase(session_id: str):
     # 注意：在实验模式下，所有节点都是好节点，不会发错误信息
     n = config["nodeCount"]
     f = (n - 1) // 3
-    primary_required = 2 * f  # 主节点需要收到超过2f个正确commit消息
+    primary_required = 2 * f  # 主节点需要收到2f个正确commit消息（加自己=2f+1）
     
     # 统计发送正确信息的不同节点（所有节点都是好节点，不会发错误信息）
     correct_nodes = set()
@@ -1503,7 +2427,7 @@ async def check_commit_phase(session_id: str):
     
     # 统计每个节点收到的commit数量
     # 在广播模型下：如果节点 i 成功广播commit，所有其他节点都会收到
-    commit_nodes = []  # “commit节点”：收到≥2f+1条commit的节点
+    commit_nodes = []  # “commit节点”：收到≥2f条commit的节点
     non_commit_nodes = []  # 未收到足够commit的节点
     
     for node_id in session["robot_nodes"]:
@@ -1820,23 +2744,24 @@ async def robot_send_pre_prepare(session_id: str):
     session["last_pre_prepare_round"] = current_round
     
     config = session["config"]
-    proposer_id = 0  # 提议者总是节点0
+    proposer_id = config.get("proposerId", 0)  # 获取配置的主节点ID，默认为0
     
-    # 只有当节点0是机器人节点时才自动发送
+    # 只有当主节点是机器人节点时才自动发送
     if proposer_id not in session["robot_nodes"]:
-        print(f"提议者 {proposer_id} 是人类节点，等待人类操作")
+        print(f"Primary node {proposer_id} is a human node, waiting for human operation")
         return
     
     # 重要：主节点自己默认收到pre-prepare（因为它自己发起的）
     session["robot_node_states"][proposer_id]["received_pre_prepare"] = True
+    print(f"Primary node {proposer_id} sending pre-prepare message")
     
-    # 点对点模型：对每个副本节点独立判断链路是否成功
+    # 多跳路由模型：对每个副本节点通过最短路径发送
     successful_count = 0
     for target_node_id in session["robot_nodes"]:
         if target_node_id == proposer_id:
             continue  # 不发送给自己
         
-        # 每条链路独立判断
+        # 通过最短路径发送（可靠性检查在should_deliver_message中处理）
         link_success = should_deliver_message(session_id, proposer_id, target_node_id)
         
         # 创建消息记录
@@ -1918,7 +2843,8 @@ async def run_experiment_round_sync(session_id: str):
 
     # 口径A
     success_threshold = n - f  # Nc >= N-f
-    per_node_threshold = 2 * f  # 单节点门限：来自其他节点的成功消息数 >= 2f
+    prepare_threshold = 2 * f - 1      # prepare阶段门限：从其他节点收到2f-1条（加自己=2f）
+    commit_threshold = 2 * f           # commit阶段门限：从其他节点收到2f条（加自己=2f+1）
 
     # V_pp
     V_pp = [
@@ -1935,7 +2861,7 @@ async def run_experiment_round_sync(session_id: str):
         )
         return
 
-    # ========== Prepare（主节点不发送prepare，对齐论文特例化） ==========
+    # ========== Prepare（主节点不发送prepare） ==========
     session["phase"] = "prepare"
     session["phase_step"] = 1
     await sio.emit('phase_update', {"phase": "prepare", "step": 1, "isMyTurn": True}, room=session_id)
@@ -1944,12 +2870,19 @@ async def run_experiment_round_sync(session_id: str):
     for node_id in session["robot_nodes"]:
         session["robot_node_states"][node_id]["received_prepare_count"] = 0
 
-    prepare_senders = [nid for nid in V_pp if nid != 0]
+    proposer_id = config.get("proposerId", 0)
+    # 副本节点发送prepare（主节点不发送）
+    prepare_senders = [node for node in V_pp if node != proposer_id]
+    total_prepare_links = 0
+    successful_prepare_links = 0
+    
     for sender in prepare_senders:
         session["robot_node_states"][sender]["sent_prepare"] = True
         for target in V_pp:
             if target == sender:
                 continue
+            total_prepare_links += 1
+            # 通过最短路径发送（可靠性检查在should_deliver_message中处理）
             link_success = should_deliver_message(session_id, sender, target)
             message = {
                 "from": sender,
@@ -1966,8 +2899,19 @@ async def run_experiment_round_sync(session_id: str):
             session["messages"]["prepare"].append(message)
             if link_success:
                 session["robot_node_states"][target]["received_prepare_count"] += 1
+                successful_prepare_links += 1
+    
+    print(f"📊 Prepare阶段完成: {successful_prepare_links}/{total_prepare_links} 条链路成功")
+    
+    # 输出每个节点收到的prepare消息数
+    for node_id in V_pp:
+        count = session["robot_node_states"][node_id]["received_prepare_count"]
+        threshold_met = "✅" if count >= prepare_threshold else "❌"
+        print(f"   节点{node_id}: 收到{count}条prepare (需要{prepare_threshold}条) {threshold_met}")
 
-    V_p = [nid for nid in V_pp if session["robot_node_states"][nid]["received_prepare_count"] >= per_node_threshold]
+    V_p = [nid for nid in V_pp if session["robot_node_states"][nid]["received_prepare_count"] >= prepare_threshold]
+    print(f"   进入Prepare阶段的节点集合V_p: {V_p} (共{len(V_p)}个，需要{success_threshold}个)")
+    
     if len(V_p) < success_threshold:
         await finalize_consensus(
             session_id,
@@ -1984,11 +2928,16 @@ async def run_experiment_round_sync(session_id: str):
     for node_id in session["robot_nodes"]:
         session["robot_node_states"][node_id]["received_commit_count"] = 0
 
+    total_commit_links = 0
+    successful_commit_links = 0
+    
     for sender in V_p:
         session["robot_node_states"][sender]["sent_commit"] = True
         for target in V_p:
             if target == sender:
                 continue
+            total_commit_links += 1
+            # 通过最短路径发送（可靠性检查在should_deliver_message中处理）
             link_success = should_deliver_message(session_id, sender, target)
             message = {
                 "from": sender,
@@ -2005,8 +2954,18 @@ async def run_experiment_round_sync(session_id: str):
             session["messages"]["commit"].append(message)
             if link_success:
                 session["robot_node_states"][target]["received_commit_count"] += 1
+                successful_commit_links += 1
+    
+    print(f"📊 Commit阶段完成: {successful_commit_links}/{total_commit_links} 条链路成功")
+    
+    # 输出每个节点收到的commit消息数
+    for node_id in V_p:
+        count = session["robot_node_states"][node_id]["received_commit_count"]
+        threshold_met = "✅" if count >= commit_threshold else "❌"
+        print(f"   节点{node_id}: 收到{count}条commit (需要{commit_threshold}条) {threshold_met}")
 
-    V_c = [nid for nid in V_p if session["robot_node_states"][nid]["received_commit_count"] >= per_node_threshold]
+    V_c = [nid for nid in V_p if session["robot_node_states"][nid]["received_commit_count"] >= commit_threshold]
+    print(f"   完成Commit阶段的节点集合V_c: {V_c} (共{len(V_c)}个，需要{success_threshold}个)")
 
     if len(V_c) >= success_threshold:
         await finalize_consensus(
@@ -2057,11 +3016,14 @@ async def robot_send_prepare_messages(session_id: str):
         print(f"10秒延迟结束，开始发送prepare消息")
     
     # 只有收到 pre-prepare 的机器人节点才发送准备消息
-    # 重要：根据PBFT协议，主节点（节点0）也需要发送prepare消息！
-    print(f"准备发送prepare消息 - 机器人节点列表: {session['robot_nodes']}")
+    config = session["config"]
+    proposer_id = config.get("proposerId", 0)
+    # 重要：根据PBFT协议，主节点也需要发送prepare消息！
+    print(f"准备发送prepare消息 - 机器人节点列表: {session['robot_nodes']}, 主节点: {proposer_id}")
     for robot_id in session["robot_nodes"]:
         # 对齐论文 Theorem 1（式(4)(6) 的特例化）：prepare 由副本集合发出，主节点不发送 prepare
-        if robot_id == 0:
+        if robot_id == proposer_id:
+            print(f"节点 {robot_id} 是主节点，不发送prepare")
             continue
         # 检查是否收到 pre-prepare（主节点默认收到自己的pre-prepare）
         if not session["robot_node_states"][robot_id]["received_pre_prepare"]:
@@ -2090,8 +3052,8 @@ async def robot_send_prepare_messages(session_id: str):
 async def handle_robot_prepare(session_id: str, robot_id: int, value: int):
     """处理机器人节点的准备消息
     
-    点对点独立链路模型：节点robot_id向每个其他节点独立发送
-    - 每条链路（robot_id→节点j）独立以概率p成功
+    多跳路由模型：节点robot_id向每个其他节点通过最短路径发送
+    - 路径上每一跳独立以概率p成功
     """
     session = get_session(session_id)
     if not session:
@@ -2101,13 +3063,13 @@ async def handle_robot_prepare(session_id: str, robot_id: int, value: int):
     
     config = session["config"]
     
-    # 点对点模型：对每个目标节点独立判断链路是否成功
+    # 多跳路由模型：对每个目标节点通过最短路径发送
     successful_count = 0
     for target_node_id in session["robot_nodes"]:
         if target_node_id == robot_id:
             continue  # 不发送给自己
         
-        # 每条链路独立判断
+        # 通过最短路径发送（可靠性检查在should_deliver_message中处理）
         link_success = should_deliver_message(session_id, robot_id, target_node_id)
         
         # 创建消息记录
@@ -2167,7 +3129,7 @@ async def check_robot_nodes_ready_for_commit(session_id: str):
     n = config["nodeCount"]
     f = (n - 1) // 3
     # 论文式(6)：单节点进入 V_p 的门限是“至少收到 2f 条来自其他节点的 prepare”
-    required_prepare = 2 * f
+    required_prepare = 2 * f - 1  # 从其他节点收到2f-1条（加自己=2f）
     
     # 判断是否为实验模式：所有节点都是机器人
     is_experiment_mode = config["robotNodes"] == config["nodeCount"]
@@ -2254,8 +3216,8 @@ async def schedule_robot_commit(session_id: str, robot_id: int, value: int):
 async def handle_robot_commit(session_id: str, robot_id: int, value: int):
     """处理机器人节点的提交消息
     
-    点对点独立链路模型：节点robot_id向每个其他节点独立发送
-    - 每条链路（robot_id→节点j）独立以概率p成功
+    多跳路由模型：节点robot_id向每个其他节点通过最短路径发送
+    - 路径上每一跳独立以概率p成功
     """
     session = get_session(session_id)
     if not session:
@@ -2264,14 +3226,16 @@ async def handle_robot_commit(session_id: str, robot_id: int, value: int):
         return
     
     config = session["config"]
+    n = config["nodeCount"]
+    f = (n - 1) // 3
     
-    # 点对点模型：对每个目标节点独立判断链路是否成功
+    # 多跳路由模型：对每个目标节点通过最短路径发送
     successful_count = 0
     for target_node_id in session["robot_nodes"]:
         if target_node_id == robot_id:
             continue  # 不发送给自己
         
-        # 每条链路独立判断
+        # 通过最短路径发送（可靠性检查在should_deliver_message中处理）
         link_success = should_deliver_message(session_id, robot_id, target_node_id)
         
         # 创建消息记录
@@ -2299,10 +3263,8 @@ async def handle_robot_commit(session_id: str, robot_id: int, value: int):
             
             # 关键修复：只有目标节点收到了足够的prepare（即在V_p中），才会接收和计数commit消息
             # 这符合PBFT协议：节点只有在prepare阶段达标后才会处理commit消息
-            n = config["nodeCount"]
-            f = (n - 1) // 3
             # 标准PBFT阈值：需要>2f条prepare（即≥2f+1条）
-            required_prepare = 2 * f
+            required_prepare = 2 * f - 1  # 从其他节点收到2f-1条（加自己=2f）
             # 论文式(6)：目标节点只有在 prepare 阶段“来自其他节点的prepare数 ≥ 2f”时，才接收并计数 commit
             target_state = session["robot_node_states"][target_node_id]
             total_prepare_count = target_state["received_prepare_count"]
