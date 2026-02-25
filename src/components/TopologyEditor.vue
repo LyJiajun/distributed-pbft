@@ -9,7 +9,7 @@
             v-model="randomMinReliability"
             :min="0"
             :max="100"
-            :step="5"
+            :step="1"
             size="small"
             controls-position="right"
             style="width: 100px;"
@@ -19,7 +19,7 @@
             v-model="randomMaxReliability"
             :min="0"
             :max="100"
-            :step="5"
+            :step="1"
             size="small"
             controls-position="right"
             style="width: 100px;"
@@ -114,7 +114,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:reliabilityMatrix', 'update:proposerId', 'update:randomRange'])
+const emit = defineEmits(['update:reliabilityMatrix', 'update:proposerId', 'update:randomRange', 'update:nodeAvailability'])
 
 const canvas = ref(null)
 const ctx = ref(null)
@@ -124,6 +124,9 @@ const directReliabilityMatrix = ref([])
 
 // 端到端可靠度矩阵（包括多跳路径）- 计算得到，发送给后端
 const reliabilityMatrix = ref([])
+
+// 节点在线率数组（新增）
+const nodeAvailability = ref([])
 
 // 节点位置缓存
 const nodePositions = ref([])
@@ -229,26 +232,50 @@ const calculateEndToEndMatrix = () => {
 }
 
 // 初始化可靠度矩阵
-const initReliabilityMatrix = () => {
+const initReliabilityMatrix = (forceReset = false) => {
   const n = props.nodeCount
   
-  // 如果传入了初始矩阵且大小匹配，尝试还原直连矩阵
-  if (props.initialMatrix && props.initialMatrix.length === n) {
+  // 如果传入了初始矩阵且大小匹配，尝试还原直连矩阵（forceReset 时跳过，直接重置为默认值）
+  if (!forceReset && props.initialMatrix && props.initialMatrix.length === n) {
     // 假设传入的是端到端矩阵，我们需要提取直连边
     const directMatrix = Array(n).fill(0).map(() => Array(n).fill(0))
+    
+    // ✅ 检查并转换数据格式（百分比 → 概率）
+    let needsConversion = false
+    for (let i = 0; i < n && !needsConversion; i++) {
+      for (let j = 0; j < n && !needsConversion; j++) {
+        if (props.initialMatrix[i][j] > 1) {
+          needsConversion = true
+          console.warn(`⚠️ [TopologyEditor] 检测到初始矩阵值 > 1: ${props.initialMatrix[i][j]}，将转换为 0-1 范围`)
+        }
+      }
+    }
+    
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
         if (i === j) {
           directMatrix[i][j] = 1
         } else if (hasConnection(i, j)) {
           // 对于直连边，从端到端矩阵中提取
-          directMatrix[i][j] = props.initialMatrix[i][j]
+          let value = props.initialMatrix[i][j]
+          
+          // ✅ 如果需要转换，将百分比转为 0-1
+          if (needsConversion && value > 1) {
+            if (value <= 100) {
+              value = value / 100
+            } else {
+              console.error(`⚠️ [TopologyEditor] 异常值: ${value}，限制为 1.0`)
+              value = 1.0
+            }
+          }
+          
+          directMatrix[i][j] = value
         }
       }
     }
     directReliabilityMatrix.value = directMatrix
     reliabilityMatrix.value = calculateEndToEndMatrix()
-    console.log(`[TopologyEditor] Restored from existing matrix (${n}x${n})`)
+    console.log(`[TopologyEditor] Restored from existing matrix (${n}x${n})${needsConversion ? ' [已转换百分比]' : ''}`)
     emitMatrix()
     return
   }
@@ -320,11 +347,19 @@ const calculateNodePositions = () => {
   nodePositions.value = positions
 }
 
-// 根据可靠度获取颜色
+// 根据可靠度获取颜色（使用更丰富的色谱）
 const getColorByReliability = (reliability) => {
-  if (reliability >= 0.8) return '#67C23A'
-  if (reliability >= 0.5) return '#E6A23C'
-  return '#F56C6C'
+  // 使用10个层级的颜色渐变，从深红到深绿
+  if (reliability >= 0.95) return '#2E7D32'  // 深绿 (95-100%)
+  if (reliability >= 0.85) return '#66BB6A'  // 浅绿 (85-95%)
+  if (reliability >= 0.75) return '#9CCC65'  // 黄绿 (75-85%)
+  if (reliability >= 0.65) return '#D4E157'  // 柠檬黄 (65-75%)
+  if (reliability >= 0.55) return '#FFEE58'  // 亮黄 (55-65%)
+  if (reliability >= 0.45) return '#FFCA28'  // 金黄 (45-55%)
+  if (reliability >= 0.35) return '#FFA726'  // 橙色 (35-45%)
+  if (reliability >= 0.25) return '#FF7043'  // 橙红 (25-35%)
+  if (reliability >= 0.15) return '#EF5350'  // 浅红 (15-25%)
+  return '#C62828'  // 深红 (<15%)
 }
 
 // 绘制单向半箭头（用于双向显示）
@@ -630,11 +665,20 @@ const drawTopology = () => {
       c.fillText('PRIMARY', pos.x, pos.y - 45)
     }
     
+    // 节点编号
     c.fillStyle = 'white'
     c.font = 'bold 20px Arial'
     c.textAlign = 'center'
     c.textBaseline = 'middle'
     c.fillText(i, pos.x, pos.y)
+    
+    // 显示节点在线率（新增）
+    if (nodeAvailability.value[i] !== undefined) {
+      const availability = (nodeAvailability.value[i] * 100).toFixed(0)
+      c.font = 'bold 12px Arial'
+      c.fillStyle = '#333'
+      c.fillText(`${availability}%`, pos.x, pos.y + 48)
+    }
   })
 }
 
@@ -717,7 +761,7 @@ const cancelInlineEdit = () => {
 
 // 重置所有可靠度
 const resetAllReliability = () => {
-  initReliabilityMatrix()
+  initReliabilityMatrix(true)
   drawTopology()
 }
 
@@ -739,10 +783,10 @@ const randomizeReliability = () => {
       if (i === j) {
         directReliabilityMatrix.value[i][j] = 1
       } else if (hasConnection(i, j)) {
-        // 在自定义范围内随机生成可靠度，以 5% 为单位
-        const min = Math.floor(randomMinReliability.value / 5)
-        const max = Math.floor(randomMaxReliability.value / 5)
-        const randomReliability = (Math.floor(Math.random() * (max - min + 1) + min) * 5) / 100
+        // 在自定义范围内随机生成可靠度，以 1% 为单位
+        const min = randomMinReliability.value
+        const max = randomMaxReliability.value
+        const randomReliability = (Math.floor(Math.random() * (max - min + 1) + min)) / 100
         directReliabilityMatrix.value[i][j] = randomReliability
       }
     }

@@ -8,6 +8,8 @@ import random
 import asyncio
 from datetime import datetime
 import json
+import networkx as nx  # 用于介数中心性计算
+from scipy.stats import norm  # 用于正态分布计算
 
 # 创建FastAPI应用
 app = FastAPI(title="分布式PBFT共识系统", version="1.0.0")
@@ -1081,7 +1083,585 @@ def calculate_theoretical_success_rate_paper_simulation(n: int, f: int, p: float
     return total_prob
 
 
+
+def calculate_betweenness_centrality(P_comm):
+    """
+    计算介数中心性（Betweenness Centrality）
+    
+    基于可靠性矩阵，将可靠度转换为"代价"，然后计算最短路径上的介数中心性。
+    
+    Args:
+        P_comm: n×n 可靠性矩阵
+    
+    Returns:
+        betweenness: 长度为 n 的数组，每个节点的介数中心性
+    """
+    n = len(P_comm)
+    
+    # Step 1: 构建加权图，权重为代价 ℓ_ij = -log(p_ij)
+    G = nx.DiGraph()
+    
+    for i in range(n):
+        for j in range(n):
+            if i != j and P_comm[i][j] > 0:
+                # 代价：可靠度越高，代价越小
+                cost = -np.log(P_comm[i][j] + 1e-10)  # 避免 log(0)
+                G.add_edge(i, j, weight=cost)
+    
+    # Step 2 & 3: 使用 NetworkX 的 Brandes 算法计算介数中心性
+    # betweenness_centrality 会自动基于最短路径计算
+    betweenness_dict = nx.betweenness_centrality(G, weight='weight', normalized=False)
+    
+    # 转换为数组
+    betweenness = np.array([betweenness_dict.get(i, 0.0) for i in range(n)])
+    
+    return betweenness
+
+
+def robust_normalize(values):
+    """
+    Robust 归一化方法（抗群点，适合论文图表）
+    
+    x̂(v) = (x(v) - median(x)) / (IQR(x) + ε)
+    
+    Args:
+        values: numpy array
+    
+    Returns:
+        normalized values
+    """
+    if len(values) == 0:
+        return values
+    
+    median_val = np.median(values)
+    q1 = np.percentile(values, 25)
+    q3 = np.percentile(values, 75)
+    iqr = q3 - q1
+    
+    epsilon = 1e-6  # 避免除零
+    normalized = (values - median_val) / (iqr + epsilon)
+    
+    return normalized
+
+
+
+def calculate_betweenness_centrality(P_comm):
+    """计算介数中心性（Betweenness Centrality）"""
+    n = len(P_comm)
+    G = nx.DiGraph()
+    
+    for i in range(n):
+        for j in range(n):
+            if i != j and P_comm[i][j] > 0:
+                import numpy as np
+                cost = -np.log(P_comm[i][j] + 1e-10)
+                G.add_edge(i, j, weight=cost)
+    
+    betweenness_dict = nx.betweenness_centrality(G, weight='weight', normalized=False)
+    import numpy as np
+    betweenness = np.array([betweenness_dict.get(i, 0.0) for i in range(n)])
+    return betweenness
+
+def robust_normalize(values):
+    """Robust 归一化: x̂ = (x - median) / (IQR + ε)"""
+    import numpy as np
+    if len(values) == 0:
+        return values
+    median_val = np.median(values)
+    q1, q3 = np.percentile(values, [25, 75])
+    iqr = q3 - q1
+    return (values - median_val) / (iqr + 1e-6)
+
+def calculate_primary_selection_metrics(n: int, f: int, P_comm, proposer_id: int = 0, node_availability: Optional[List[float]] = None):
+    """
+    计算主节点选择指标（包括新的综合指标）
+    
+    Args:
+        n: 节点总数
+        f: 拜占庭节点数
+        P_comm: n×n 通信可靠性矩阵
+        proposer_id: 主节点 ID
+        node_availability: 每个节点的在线率 s(v) ∈ [0, 1]，如果为 None 则默认全为 1.0
+    
+    Returns:
+        包含所有指标的字典
+    """
+    """计算主节点选择的各项指标
+    
+    基于论文方法，计算：
+    1. Q_pp(v): 第一阶段（Pre-prepare）主节点 v 能够触达的副本概率（Quorum-Reach）
+    2. P_i^prep(v): 每个节点 i 在第二阶段（Prepare）收到足够消息的概率
+    3. Φ_min(v): 最弱节点（瓶颈）
+    4. Φ_q(v): Quorum 聚合（top-(2f+1) 的平均）
+    5. I(v) = Q_pp(v) · Φ_q(v): 综合指标
+    
+    Args:
+        n: 节点数
+        f: 容错数
+        P_comm: 通信可靠性矩阵 (n×n)
+        proposer_id: 主节点ID
+        
+    Returns:
+        dict: 包含所有指标的字典
+    """
+    import numpy as np
+    from math import comb
+    
+    if not isinstance(P_comm, np.ndarray):
+        P_comm = np.array(P_comm)
+    
+    v = proposer_id
+    k_prepare = 2 * f  # Prepare阶段门槛（论文中常见值）
+    quorum_size = 2 * f + 1  # Quorum大小
+    
+    # ========== 1. 计算 Q_pp(v): Pre-prepare 阶段主节点触达概率 (DP 精确方法) ==========
+    # 主节点 v 需要成功发送 Pre-prepare 给至少 k=2f 个副本
+    # 使用动态规划精确计算（考虑每个链路的不同可靠性）
+    
+    print(f"\n=== 计算 Q_pp(v) [DP精确方法] (proposer_id={proposer_id}) ===")
+    
+    # 获取所有接收节点（除主节点外）
+    receivers = [j for j in range(n) if j != v]
+    p_links = [P_comm[v, j] for j in receivers]  # 每条链路的可靠性
+    
+    # DP: dp[k] = 成功发送给恰好 k 个节点的概率
+    # 初始化：没有任何节点，成功数=0的概率=1
+    dp = {0: 1.0}
+    
+    # 逐个节点加入
+    for idx, p_j in enumerate(p_links):
+        new_dp = {}
+        for k, prob in dp.items():
+            # 发送给节点 j 成功
+            if k + 1 not in new_dp:
+                new_dp[k + 1] = 0.0
+            new_dp[k + 1] += prob * p_j
+            
+            # 发送给节点 j 失败
+            if k not in new_dp:
+                new_dp[k] = 0.0
+            new_dp[k] += prob * (1 - p_j)
+        
+        dp = new_dp
+    
+    # 计算 Q_pp = Pr(成功数 ≥ quorum_size)
+    Q_pp = 0.0
+    for k, prob in dp.items():
+        if k >= quorum_size:
+            Q_pp += prob
+    
+    # ========== 1.2. 计算 Q_3(v): 使用极严格的阈值 (n-1, 所有节点) ==========
+    quorum_size_strict = n - 1  # 极严格：要求触达所有其他节点
+    Q_3 = 0.0
+    for k, prob in dp.items():
+        if k >= quorum_size_strict:
+            Q_3 += prob
+    
+    print(f"  - 接收节点数: {len(receivers)}")
+    print(f"  - 链路可靠性: {[f'{p:.3f}' for p in p_links]}")
+    print(f"  - Quorum阈值 (标准): k = {quorum_size}")
+    print(f"  - Quorum阈值 (极严格Q_3): k = {quorum_size_strict} (n-1)")
+    print(f"  - DP 状态数: {len(dp)}")
+    print(f"  - Q_pp(v) [DP精确]: {Q_pp:.6f}")
+    print(f"  - Q_3(v) [极严格阈值 n-1]: {Q_3:.6f}")
+    
+    # ========== 1.5. 计算节点权重 w_u（用于 q_u 和 Q_w）==========
+    # w_u = √(Q_out(u) × Q_in(u))
+    
+    w_u = np.zeros(n)
+    for u in range(n):
+        if u == v:
+            w_u[u] = 0.0  # 主节点不作为接收者
+            continue
+        
+        k_w = quorum_size
+        
+        # 计算 Q_out(u)：节点u向外发送达到quorum的概率
+        out_receivers = [x for x in range(n) if x != u]
+        p_out_links = [P_comm[u, x] for x in out_receivers]
+        
+        dp_out = {0: 1.0}
+        for p_x in p_out_links:
+            new_dp = {}
+            for k, prob in dp_out.items():
+                new_dp[k+1] = new_dp.get(k+1, 0.0) + prob * p_x
+                new_dp[k] = new_dp.get(k, 0.0) + prob * (1 - p_x)
+            dp_out = new_dp
+        
+        Q_out_u = sum(prob for k, prob in dp_out.items() if k >= k_w)
+        
+        # 计算 Q_in(u)：节点u从其他节点接收达到quorum的概率
+        in_senders = [x for x in range(n) if x != u]
+        p_in_links = [P_comm[x, u] for x in in_senders]
+        
+        dp_in = {0: 1.0}
+        for p_x in p_in_links:
+            new_dp = {}
+            for k, prob in dp_in.items():
+                new_dp[k+1] = new_dp.get(k+1, 0.0) + prob * p_x
+                new_dp[k] = new_dp.get(k, 0.0) + prob * (1 - p_x)
+            dp_in = new_dp
+        
+        Q_in_u = sum(prob for k, prob in dp_in.items() if k >= k_w)
+        
+        # 双向权重
+        w_u[u] = np.sqrt(Q_out_u * Q_in_u)
+    
+    print(f"\n[节点权重计算] proposer_id={proposer_id}")
+    print(f"  w_u = √(Q_out × Q_in)")
+    for u in range(n):
+        if u != v and w_u[u] > 0:
+            print(f"    节点 {u}: w_u={w_u[u]:.4f}")
+    
+    # ========== 9. 计算 q_u（节点有效性）和 E(v) ==========
+    # q_u = 节点 u 的有效性概率（使用 w_u 作为代理）
+    # E(v) = Σ_{u≠v} q_u · p_{v→u}（连续性指标，用于 tie-breaker）
+    
+    q_u = np.zeros(n)
+    for u in range(n):
+        if u != v:
+            q_u[u] = w_u[u]  # 使用双向权重作为节点有效性
+    
+    E_v = 0.0
+    for u in range(n):
+        if u != v:
+            p_vu = P_comm[v, u]
+            E_v += q_u[u] * p_vu
+    
+    print(f"E(v) (连续性Tie-breaker): {E_v:.4f}")
+    
+    # ========== 9.5. 重新计算 Q_w(v): 使用"有效送达概率"的 DP 方法 ==========
+    # 新方法：
+    # 1. 有效送达概率：π_{v,u} = p_{v→u} × q_u
+    # 2. 使用标准 DP 计算 Pr(有效节点数 ≥ k)
+    
+    print(f"\n[Weighted-Q 新算法] proposer_id={proposer_id}")
+    print(f"  有效送达概率: π_{'{v,u}'} = p_{'{v→u}'} × q_u")
+    
+    # 计算有效送达概率
+    effective_probs = []
+    for u in range(n):
+        if u != v:
+            pi_vu = P_comm[v, u] * q_u[u]
+            effective_probs.append(pi_vu)
+            if q_u[u] > 0:
+                print(f"    节点 {u}: π_{'{v,'}{u}{'}'} = {P_comm[v, u]:.3f} × {q_u[u]:.3f} = {pi_vu:.4f}")
+    
+    # 使用标准 DP 计算 Pr(有效节点数 ≥ k)
+    # 类似于 Q_pp 的计算，但使用有效送达概率
+    dp = {0: 1.0}
+    for pi in effective_probs:
+        new_dp = {}
+        for count, prob in dp.items():
+            # 情况 1: 没有有效送达
+            new_dp[count] = new_dp.get(count, 0.0) + prob * (1 - pi)
+            # 情况 2: 有效送达
+            new_dp[count + 1] = new_dp.get(count + 1, 0.0) + prob * pi
+        dp = new_dp
+    
+    # 计算 Q_w = Pr(有效节点数 ≥ quorum_size)
+    Q_w = sum(prob for count, prob in dp.items() if count >= quorum_size)
+    
+    print(f"  - DP 状态数: {len(dp)}")
+    print(f"  - Q_w(v) [新方法] = {Q_w:.6f}")
+    
+    # ========== 2. 计算每个节点的 w_j(v): 第一阶段存活概率 ==========
+    # w_j(v) = P_comm[v, j] 表示节点 j 收到主节点 v 的 Pre-prepare 的概率
+    w = np.zeros(n)
+    w[v] = 1.0  # 主节点自己
+    for j in range(n):
+        if j != v:
+            w[j] = P_comm[v, j]
+    
+    # ========== 3. 计算每个节点 i 的 P_i^prep(v) ==========
+    # 节点 i 在 Prepare 阶段收到来自其他节点的消息
+    # Pr(j→i 的 prepare 成功) ≈ w_j(v) · P_comm[j, i]
+    # Y_i(v) = 节点 i 收到的 prepare 数量
+    # P_i^prep(v) = Pr(Y_i(v) ≥ k_prepare)
+    
+    P_prep = np.zeros(n)
+    
+    for i in range(n):
+        # 特殊处理主节点：主节点在第一阶段已经成功，进入第二阶段的概率为 1
+        if i == v:
+            P_prep[i] = 1.0
+            continue
+        
+        # 副本节点 i 需要从其他节点收到至少 k_prepare 条 prepare 消息
+        # 发送者：除了节点 i 自己的所有节点（主节点在 Prepare 阶段不发送）
+        senders = [j for j in range(n) if j != i and j != v]  # 主节点不发 prepare
+        
+        # 计算节点 i 收到至少 k_prepare 条消息的概率
+        # 使用二项近似：每个发送者 j 的成功概率 = w_j(v) · P_comm[j, i]
+        prob_success = []
+        for j in senders:
+            p_ji = w[j] * P_comm[j, i]  # j→i 的 prepare 成功概率
+            prob_success.append(p_ji)
+        
+        # 简化计算：假设独立，使用平均概率的二项分布近似
+        if len(prob_success) > 0:
+            avg_p = np.mean(prob_success)
+            m = len(senders)
+            for k in range(k_prepare, m + 1):
+                P_prep[i] += comb(m, k) * (avg_p ** k) * ((1 - avg_p) ** (m - k))
+        else:
+            P_prep[i] = 0.0
+    
+    # ========== 4. 计算 Φ_min(v): 最弱节点（瓶颈） ==========
+    Phi_min = np.min(P_prep)
+    
+    # ========== 5. 计算 Φ_q(v): Quorum 聚合（尾概率方法）==========
+    # top-(2f+1) 个节点的 P_prep 平均值（包括主节点的权重1.0）
+    # P_prep[i] = Pr(Y_i(v) ≥ k_prepare) 本身就是尾概率
+    sorted_P_prep = np.sort(P_prep)[::-1]  # 降序排序
+    top_k = min(quorum_size, len(sorted_P_prep))
+    Phi_q = np.mean(sorted_P_prep[:top_k])
+    
+    print(f"\n=== 主节点选择指标计算（proposer_id={proposer_id}）===")
+    print(f"Q_pp(v) [DP精确]: {Q_pp:.4f}")
+    print(f"\n--- Weighted-Q 计算详情 ---")
+    print(f"w_u (原始权重): {w_u}")
+    print(f"q_u (节点有效性): {q_u}")
+    print(f"Q_w(v) [有效节点数方法]: {Q_w:.4f}")
+    print(f"P_prep (包括主节点权重1.0): {P_prep}")
+    print(f"Phi_min(v): {Phi_min:.4f}")
+    print(f"Phi_q(v) (top-{top_k} 平均): {Phi_q:.4f}")
+    print(f"I(v) = Q_pp × Phi_q: {Q_pp * Phi_q:.4f}")
+    print(f"I_w(v) = Q_w × Phi_q: {Q_w * Phi_q:.4f}")
+    
+    # ========== 6. 计算综合指标 I(v) 和 I_w(v) ==========
+    I_v = Q_pp * Phi_q
+    I_w = Q_w * Phi_q  # 新的加权综合指标
+    
+    # ========== 7. 计算介数中心性 C_B(v) ==========
+    betweenness = calculate_betweenness_centrality(P_comm)
+    C_B = betweenness[proposer_id]
+    
+    # ========== 8. 获取节点在线率 s(v) ==========
+    if node_availability is None:
+        node_availability = [1.0] * n  # 默认全部在线
+    s_v = node_availability[proposer_id]
+    
+    print(f"C_B(v) (介数中心性): {C_B:.4f}")
+    print(f"s(v) (在线率): {s_v:.4f}")
+    
+    # ========== 9. 计算 E(v) 和 q_u（节点有效性）==========
+    # 方案：q_u = Q_out(u)（节点 u 的向外广播能力）
+    # E(v) = Σ_{u≠v} q_u · p_{v→u}
+    
+    # 提取 q_u（使用已计算的 w_u 的平方，因为 w_u = √(Q_out × Q_in)）
+    # 为简化，直接使用 Q_out(u) 作为 q_u
+    q_u = np.zeros(n)
+    for u in range(n):
+        if u != v:
+            # 从 w_u 反推 Q_out(u)（近似）
+            # 或者直接使用 w_u 的平方作为 q_u 的代理
+            # 这里简化：q_u ≈ w_u（双向权重已经反映了节点能力）
+            q_u[u] = w_u[u]
+    
+    E_v = 0.0
+    for u in range(n):
+        if u != v:
+            p_vu = P_comm[v, u]
+            E_v += q_u[u] * p_vu
+    
+    print(f"E(v) (连续性Tie-breaker): {E_v:.4f}")
+    
+    # ========== 10. 计算 P_close(v): Cohort 闭环成功概率 ==========
+    # 根据论文公式：
+    # 1. 定义 cohort C(v) = Top-m nodes by p_{v→u}，其中 m = k = 2f + 1
+    # 2. 对 cohort 内任意 i→j (i≠j)，定义 Y_{i→j} ~ Bernoulli(p_{i→j})
+    # 3. 对每个节点 i ∈ C(v)，统计它"收到至少 k 个 cohort 内消息"的概率
+    # 4. 定义事件集 S = {i ∈ C(v) : D_i ≥ r} ≥ k，其中：
+    #    - D_i = Σ_{j∈C,j≠i} Y_{j→i}（节点i收到的cohort内消息数）
+    #    - r 是阈值（f=1时 r=2；更一般地 r 可以取值使得"cohort内大多数节点都满足"）
+    # 5. P_close(v) = Pr(|S| ≥ k)
+    
+    m = k  # cohort size = 2f + 1
+    
+    # Step 1: 选出 proposer v 的 out-cohort（按 p_{v→u} 排序，取 top-m）
+    out_edges = [(u, P_comm[v, u]) for u in range(n) if u != v]
+    out_edges_sorted = sorted(out_edges, key=lambda x: x[1], reverse=True)
+    cohort_nodes = [u for u, _ in out_edges_sorted[:m]]
+    
+    print(f"\nCohort C(v) = {cohort_nodes} (size={len(cohort_nodes)})")
+    
+    # Step 2: 定义 cohort 内部的通信概率矩阵
+    # P_cohort[i][j] = P_comm[cohort_nodes[i], cohort_nodes[j]]
+    cohort_size = len(cohort_nodes)
+    P_cohort = np.zeros((cohort_size, cohort_size))
+    for i_idx, i in enumerate(cohort_nodes):
+        for j_idx, j in enumerate(cohort_nodes):
+            if i != j:
+                P_cohort[i_idx, j_idx] = P_comm[i, j]
+    
+    # Step 3: 对每个 cohort 节点 i，计算它"收到至少 r 个消息"的概率
+    # 使用 r = min(2f, cohort_size-1)（合理阈值：不能超过可能的最大值）
+    r_threshold = min(k - 1, cohort_size - 1)  # k-1 = 2f，且不能超过 cohort_size-1
+    
+    print(f"r_threshold (cohort 内达标阈值): {r_threshold} (cohort_size={cohort_size}, k={k})")
+    
+    # 使用 DP 精确计算：节点 i 收到至少 r 个消息的概率
+    def calc_receive_at_least_r_from_cohort(i_idx, r):
+        """计算 cohort 节点 i 收到至少 r 个 cohort 内消息的概率"""
+        probs = []
+        for j_idx in range(cohort_size):
+            if j_idx != i_idx:
+                probs.append(P_cohort[j_idx, i_idx])  # j→i 的概率
+        
+        # DP: dp[msg_count] = probability
+        if len(probs) == 0:
+            return 0.0 if r > 0 else 1.0
+        
+        dp = {0: 1.0}  # 初始：收到0个消息的概率为1
+        
+        for p_ji in probs:
+            new_dp = {}
+            for count, prob in dp.items():
+                # 收到这条消息
+                new_dp[count + 1] = new_dp.get(count + 1, 0.0) + prob * p_ji
+                # 没收到这条消息
+                new_dp[count] = new_dp.get(count, 0.0) + prob * (1 - p_ji)
+            dp = new_dp
+        
+        # 汇总：≥ r 的概率
+        prob_at_least_r = sum(prob for count, prob in dp.items() if count >= r)
+        return prob_at_least_r
+    
+    # Step 4: 计算每个 cohort 节点满足条件的概率
+    cohort_node_success_probs = []
+    for i_idx in range(cohort_size):
+        prob_i = calc_receive_at_least_r_from_cohort(i_idx, r_threshold)
+        cohort_node_success_probs.append(prob_i)
+        print(f"  节点 {cohort_nodes[i_idx]}: P(D_i ≥ {r_threshold}) = {prob_i:.4f}")
+    
+    # Step 5: 计算 P_close(v) = Pr(至少 k 个 cohort 节点满足条件)
+    # 使用 DP 精确计算
+    dp_close = {0: 1.0}  # 初始：0个节点满足的概率为1
+    
+    for prob_i in cohort_node_success_probs:
+        new_dp_close = {}
+        for count, prob in dp_close.items():
+            # 这个节点满足
+            new_dp_close[count + 1] = new_dp_close.get(count + 1, 0.0) + prob * prob_i
+            # 这个节点不满足
+            new_dp_close[count] = new_dp_close.get(count, 0.0) + prob * (1 - prob_i)
+        dp_close = new_dp_close
+    
+    P_close = sum(prob for count, prob in dp_close.items() if count >= k)
+    
+    print(f"\nP_close(v) (Cohort 闭环成功概率): {P_close:.4f}")
+    
+    # 计算 Q_fix = Q_pp × P_close
+    Q_fix = Q_pp * P_close
+    print(f"Q_fix(v) = Q_pp × P_close = {Q_pp:.4f} × {P_close:.4f} = {Q_fix:.4f}")
+    
+    # ========== 10. 计算 Q_2(v): 平均发送能力 ==========
+    # Q_2(v) = 主节点 v 的平均 outgoing reliability
+    # 即：从节点 v 到其他所有节点的链路可靠性的平均值
+    outgoing_reliabilities = [P_comm[v, j] for j in range(n) if j != v]
+    Q_2 = np.mean(outgoing_reliabilities) if outgoing_reliabilities else 0.0
+    print(f"\n=== Q_2(v): 平均发送能力 ===")
+    print(f"  - Outgoing links: {[f'{p:.3f}' for p in outgoing_reliabilities]}")
+    print(f"  - Q_2(v) = {Q_2:.4f}")
+    
+    # ========== 11. 归一化（Robust 方法）==========
+    # 注意：归一化需要所有节点的值，所以这里先返回原始值
+    # 在调用端批量归一化
+    
+    return {
+        'Q_pp': Q_pp,  # Pre-prepare 触达概率（原始方法）
+        'Q_w': Q_w,  # Weighted-Q 加权触达概率（新方法）
+        'Q_2': Q_2,  # ✅ 新增：平均发送能力
+        'Q_3': Q_3,  # ✅ NEW - Q_3(v) 严格阈值 (k=2f+2)
+        'E_v': E_v,  # 连续性指标（用于 tie-breaker）
+        'P_close': P_close,  # Cohort 闭环成功概率
+        'Q_fix': Q_fix,  # ✅ 新增：Q_fix = Q_pp × P_close
+        'cohort': cohort_nodes,  # ✅ 新增：Cohort 节点列表
+        'cohort_node_probs': cohort_node_success_probs,  # ✅ 新增：每个 cohort 节点的达标概率
+        'P_prep': P_prep.tolist(),  # 每个节点的 Prepare 阶段成功概率
+        'Phi_min': Phi_min,  # 最弱节点
+        'Phi_q': Phi_q,  # Quorum 聚合（尾概率方法）
+        'I_v': I_v,  # 综合指标（Q_pp × Φ_q）
+        'I_w': I_w,  # 加权综合指标（Q_w × Φ_q）
+        'C_B': C_B,  # 介数中心性
+        's_v': s_v,  # 节点在线率
+        'betweenness_all': betweenness.tolist(),  # 所有节点的介数中心性（用于批量归一化）
+        'w_u': w_u.tolist(),  # 每个节点的权重（用于调试）
+        'q_u': q_u.tolist()  # 节点有效性（用于调试）
+    }
+
 # HTTP路由
+@app.post("/api/theory/calculate")
+async def calculate_theory_direct(request: dict):
+    """直接计算理论成功率（不创建session）
+    
+    Request body:
+    {
+        "nodeCount": int,
+        "faultyNodes": int,
+        "proposerId": int,
+        "reliabilityMatrix": [[float]] (optional, n×n矩阵)
+    }
+    """
+    try:
+        n = request.get("nodeCount")
+        f = request.get("faultyNodes")
+        proposer_id = request.get("proposerId", 0)
+        reliability_matrix = request.get("reliabilityMatrix")
+        node_availability = request.get("nodeAvailability")  # 新增：节点在线率
+        
+        if n is None or f is None:
+            raise HTTPException(status_code=400, detail="Missing required parameters")
+        
+        import numpy as np
+        
+        # 构建可靠度矩阵
+        if reliability_matrix:
+            # 使用自定义可靠度矩阵
+            P_comm = np.array(reliability_matrix)
+            theoretical_rate = calculate_theoretical_success_rate_custom_matrix(n, f, P_comm, proposer_id)
+        else:
+            # 使用均匀可靠度（从request中获取，或默认0.9）
+            p = request.get("reliability", 0.9)
+            P_comm = np.full((n, n), p)
+            np.fill_diagonal(P_comm, 1.0)  # 对角线为1
+            theoretical_rate = calculate_theoretical_success_rate_paper_simulation(n, f, p)
+        
+        # 计算主节点选择指标（新增 node_availability 参数）
+        metrics = calculate_primary_selection_metrics(n, f, P_comm, proposer_id, node_availability)
+        
+        return {
+            "theoreticalSuccessRate": theoretical_rate * 100,
+            "proposerId": proposer_id,
+            "metrics": {
+                "Q_pp": metrics['Q_pp'] * 100,      # 原始 Q(v)
+                "Q_w": metrics['Q_w'] * 100,        # ✅ NEW - 加权 Q_w(v)
+                "Q_2": metrics['Q_2'] * 100,        # ✅ NEW - 平均发送能力
+                "Q_3": metrics['Q_3'] * 100,        # ✅ NEW - 极严格阈值 Q_3(v) (k=n-1, 所有节点)
+                "E_v": metrics['E_v'],              # ✅ NEW - 连续性指标（tie-breaker）
+                "P_close": metrics['P_close'],      # ✅ NEW - Cohort 闭环成功概率
+                "Q_fix": metrics['Q_fix'],          # ✅ NEW - Q_fix = Q_pp × P_close
+                "cohort": metrics['cohort'],        # ✅ NEW - Cohort 节点列表
+                "cohort_node_probs": metrics['cohort_node_probs'],  # ✅ NEW - Cohort 节点达标概率
+                "P_prep": [p * 100 for p in metrics['P_prep']],
+                "Phi_min": metrics['Phi_min'] * 100,
+                "Phi_q": metrics['Phi_q'] * 100,
+                "I_v": metrics['I_v'] * 100,        # 原始 I(v)
+                "I_w": metrics['I_w'] * 100,        # ✅ NEW - 加权 I_w(v)
+                "C_B": metrics['C_B'],
+                "s_v": metrics['s_v'] * 100,
+                "betweenness_all": metrics['betweenness_all'],
+                "w_u": metrics['w_u'],              # ✅ 节点权重（双向能力）
+                "q_u": metrics['q_u']               # ✅ 节点有效性
+            }
+        }
+    except Exception as e:
+        print(f"理论计算错误: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/sessions")
 async def create_consensus_session(config: SessionConfig):
     """创建新的共识会话"""

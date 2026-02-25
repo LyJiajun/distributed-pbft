@@ -10,6 +10,8 @@
               <label for="radio-consensus">Consensus</label>
               <input :checked="currentPage === 'experiment'" id="radio-experiment" name="page-nav" type="radio" @change="currentPage = 'experiment'" />
               <label for="radio-experiment">Experiment</label>
+              <input :checked="currentPage === 'primary-selection'" id="radio-primary" name="page-nav" type="radio" @change="currentPage = 'primary-selection'" />
+              <label for="radio-primary">Primary Selection</label>
               <div class="glider-container">
                 <div class="glider"></div>
               </div>
@@ -378,7 +380,7 @@
                         
                         <el-form-item>
                           <el-button 
-                            v-if="!experimentRunning && !allProposersRunning"
+                            v-if="!experimentRunning"
                             type="primary" 
                             @click="startExperiment"
                             :icon="VideoPlay"
@@ -387,28 +389,13 @@
                             Start Experiment
                           </el-button>
                           <el-button 
-                            v-if="experimentRunning || allProposersRunning"
+                            v-if="experimentRunning"
                             type="danger" 
                             @click="stopExperiment"
                             style="width: 100%;"
                           >
                             Stop Experiment
                           </el-button>
-                        </el-form-item>
-                        
-                        <el-form-item>
-                          <el-button 
-                            v-if="!experimentRunning && !allProposersRunning"
-                            type="success" 
-                            @click="runAllProposersExperiment"
-                            style="width: 100%;"
-                          >
-                            <el-icon><Histogram /></el-icon>
-                            Run All Proposers Experiment
-                          </el-button>
-                          <div v-if="allProposersRunning" style="text-align: center; color: #67C23A; font-weight: 600;">
-                            Testing Proposer {{ currentProposerIndex }} / {{ experimentConfig.nodeCount }}
-                          </div>
                         </el-form-item>
                       </el-form>
                     </div>
@@ -509,6 +496,218 @@
                     </div>
                   </el-col>
                 </el-row>
+              </div>
+            </el-card>
+                </el-col>
+              </el-row>
+            </div>
+            
+            <!-- 主节点选择实验页面 -->
+            <div v-show="currentPage === 'primary-selection'" class="page-content">
+              <el-row :gutter="40">
+                <el-col :span="24">
+                  <el-card class="experiment-card">
+              <template #header>
+                <div class="card-header" style="display: flex; align-items: center; justify-content: space-between;">
+                  <span>🎯 Primary Node Selection Experiments</span>
+                  <el-tag :type="(allProposersRunning || batchExperimentRunning) ? 'success' : 'info'" effect="dark">
+                    {{ (allProposersRunning || batchExperimentRunning) ? 'Experiment Running' : 'Not Running' }}
+                  </el-tag>
+                </div>
+              </template>
+              
+              <div class="experiment-content">
+                <el-row :gutter="40">
+                  <!-- 左侧：Experiment Configuration -->
+                  <el-col :span="8">
+                    <div class="experiment-config">
+                      <h3>Experiment Configuration</h3>
+                      <el-form label-width="120px">
+                        <el-form-item label="Total Nodes">
+                          <el-input-number 
+                            v-model="primarySelectionConfig.nodeCount" 
+                            :min="4" 
+                            :max="10"
+                            :disabled="allProposersRunning || batchExperimentRunning"
+                            controls-position="right"
+                          />
+                        </el-form-item>
+                        
+                        <el-form-item label="Faulty Nodes">
+                          <el-input-number 
+                            v-model="primarySelectionConfig.faultyNodes" 
+                            :min="0" 
+                            :max="Math.floor((primarySelectionConfig.nodeCount - 1) / 3)"
+                            :disabled="allProposersRunning || batchExperimentRunning"
+                            controls-position="right"
+                          />
+                          <div class="form-tip">Byzantine fault tolerance requires: f < n/3</div>
+                        </el-form-item>
+                        
+                        <el-form-item label="Topology">
+                          <el-select 
+                            v-model="primarySelectionConfig.topology" 
+                            placeholder="Select topology"
+                            :disabled="allProposersRunning || batchExperimentRunning"
+                          >
+                            <el-option label="Full Mesh" value="full" />
+                            <el-option label="Ring" value="ring" />
+                            <el-option label="Star" value="star" />
+                            <el-option label="Tree" value="tree" />
+                          </el-select>
+                        </el-form-item>
+                        
+                        <el-form-item label="Branch Count" v-if="primarySelectionConfig.topology === 'tree'">
+                          <el-input-number 
+                            v-model="primarySelectionConfig.branchCount" 
+                            :min="2" 
+                            :max="5"
+                            :disabled="allProposersRunning || batchExperimentRunning"
+                            controls-position="right"
+                          />
+                        </el-form-item>
+                        
+                        <el-form-item label="Reliability Matrix">
+                          <el-button
+                            type="primary"
+                            size="default"
+                            style="width: 100%;"
+                            :disabled="allProposersRunning || batchExperimentRunning"
+                            @click="showPrimaryMatrixEditor = true"
+                          >
+                            <el-icon><Edit /></el-icon>
+                            Edit Reliability Matrix
+                          </el-button>
+                          <div class="form-tip">Configure node-to-node communication reliability</div>
+                        </el-form-item>
+                        
+                        <el-divider></el-divider>
+                        
+                        <el-form-item>
+                          <el-button 
+                            v-if="!experimentRunning && !allProposersRunning && !batchExperimentRunning"
+                            type="success" 
+                            @click="runAllProposersExperiment"
+                            style="width: 100%;"
+                          >
+                            <el-icon><Histogram /></el-icon>
+                            Run All Proposers Experiment
+                          </el-button>
+                          
+                          <el-button 
+                            v-if="experimentRunning || allProposersRunning || batchExperimentRunning"
+                            type="danger" 
+                            @click="stopExperiment"
+                            style="width: 100%;"
+                          >
+                            Stop Experiment
+                          </el-button>
+                        </el-form-item>
+                        
+                        <el-form-item>
+                          <el-button 
+                            type="warning" 
+                            @click="runBatchRandomExperiments"
+                            style="width: 100%;"
+                            :disabled="batchExperimentRunning || allProposersRunning"
+                          >
+                            <el-icon><Refresh /></el-icon>
+                            Batch Random Experiments
+                          </el-button>
+                          
+                          <div v-if="allProposersRunning && !batchExperimentRunning" style="text-align: center; color: #67C23A; font-weight: 600; margin-top: 10px;">
+                            Testing Proposer {{ currentProposerIndex }} / {{ primarySelectionConfig.nodeCount }}
+                          </div>
+                          
+                          <div v-if="batchExperimentRunning" style="text-align: center; color: #E6A23C; font-weight: 600; margin-top: 10px;">
+                            Batch {{ currentBatchRound }} / {{ batchExperimentRounds }} - Proposer {{ currentProposerIndex }} / {{ primarySelectionConfig.nodeCount }}
+                          </div>
+                        </el-form-item>
+                        
+                        <!-- 批量实验配置 -->
+                        <el-form-item label="Batch Rounds">
+                          <el-input-number 
+                            v-model="batchExperimentRounds" 
+                            :min="2" 
+                            :disabled="batchExperimentRunning"
+                            controls-position="right"
+                          />
+                          <div class="form-tip">Number of random experiments to run (no limit)</div>
+                        </el-form-item>
+                      </el-form>
+                    </div>
+                  </el-col>
+                  
+                  <!-- 中间：Experiment Progress -->
+                  <el-col :span="8">
+                    <div class="experiment-progress">
+                      <h3>Experiment Progress</h3>
+                      <div v-if="allProposersRunning || batchExperimentRunning || allProposersResults.length > 0">
+                        <el-statistic 
+                          v-if="allProposersRunning && !batchExperimentRunning"
+                          title="Current Proposer" 
+                          :value="currentProposerIndex" 
+                          :suffix="`/ ${experimentConfig.nodeCount}`" 
+                        />
+                        <el-statistic 
+                          v-if="batchExperimentRunning"
+                          title="Batch Progress" 
+                          :value="currentBatchRound" 
+                          :suffix="`/ ${batchExperimentRounds}`" 
+                        />
+                        
+                        <!-- 波浪形加载动画 -->
+                        <div class="wave-loader-container" style="margin-top: 20px;">
+                          <ul class="wave-menu" :class="{ 'completed': !allProposersRunning && !batchExperimentRunning }">
+                            <li v-for="i in 9" :key="i"></li>
+                          </ul>
+                          <div class="progress-text" v-if="allProposersRunning && !batchExperimentRunning">
+                            {{ Math.round((currentProposerIndex / experimentConfig.nodeCount) * 100) }}%
+                          </div>
+                          <div class="progress-text" v-if="batchExperimentRunning">
+                            {{ Math.round((currentBatchRound / batchExperimentRounds) * 100) }}%
+                          </div>
+                        </div>
+                        
+                        <div class="stats-grid" style="margin-top: 30px;" v-if="allProposersResults.length > 0">
+                          <div class="stat-item">
+                            <div class="stat-label">Total Proposers Tested</div>
+                            <div class="stat-value primary">{{ allProposersResults.length }}</div>
+                          </div>
+                          <div class="stat-item" v-if="batchExperimentResults.length > 0">
+                            <div class="stat-label">Batch Experiments</div>
+                            <div class="stat-value success">{{ batchExperimentResults.length }}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <el-empty 
+                        v-else 
+                        description="No Experiment Data" 
+                        :image-size="100"
+                      />
+                    </div>
+                  </el-col>
+                  
+                  <!-- 右侧：Batch Statistics -->
+                  <el-col :span="8">
+                    <div class="experiment-results">
+                      <h3>Batch Experiment Statistics</h3>
+                      <div v-if="gainLossStatsDisplay" class="results-list">
+                        <el-scrollbar height="600px" style="width: 100%;">
+                          <div style="padding-right: 12px;">
+                            <!-- 统计内容将在这里显示 -->
+                            <div v-html="gainLossStatsHTML"></div>
+                          </div>
+                        </el-scrollbar>
+                      </div>
+                      <el-empty 
+                        v-else 
+                        description="Run Batch Experiments to see statistics" 
+                        :image-size="100"
+                      />
+                    </div>
+                  </el-col>
+                </el-row>
                 
                 <!-- All Proposers Experiment Results Chart -->
                 <el-row v-if="allProposersResults.length > 0" :gutter="20" style="margin-top: 30px;">
@@ -520,11 +719,27 @@
                         </div>
                       </template>
                       
-                      <div ref="allProposersChartContainer" style="width: 100%; height: 500px;"></div>
+                      <div ref="allProposersChartContainer" style="width: 100%; height: 700px;"></div>
                       
                       <div style="margin-top: 20px; text-align: center;">
                         <el-button type="primary" @click="exportAllProposersResults">
                           Export Comparison Results
+                        </el-button>
+                        <el-button 
+                          type="warning"
+                          @click="exportBatchExperimentResults"
+                          v-if="batchExperimentResults.length > 0"
+                          style="margin-left: 10px;"
+                        >
+                          Export Batch Experiments Data
+                        </el-button>
+                        <el-button 
+                          type="danger"
+                          @click="exportMismatchedRounds"
+                          v-if="batchExperimentResults.length > 0"
+                          style="margin-left: 10px;"
+                        >
+                          Export Mismatched Rounds (Gain Loss ≠ 0)
                         </el-button>
                         <el-button 
                           type="warning" 
@@ -555,10 +770,10 @@
       </el-main>
     </el-container>
     
-    <!-- 可靠度矩阵编辑器对话框 -->
+    <!-- 可靠度矩阵编辑器对话框 (Experiment 页面) -->
     <el-dialog
       v-model="showMatrixEditor"
-      title="Edit Reliability Matrix"
+      title="Edit Reliability Matrix - Experiment"
       width="95%"
       top="2vh"
       :close-on-click-modal="false"
@@ -577,6 +792,31 @@
         @update:reliabilityMatrix="onReliabilityMatrixUpdate"
         @update:proposerId="onProposerIdUpdate"
         @update:randomRange="onRandomRangeUpdate"
+      />
+    </el-dialog>
+    
+    <!-- 可靠度矩阵编辑器对话框 (Primary Selection 页面) -->
+    <el-dialog
+      v-model="showPrimaryMatrixEditor"
+      title="Edit Reliability Matrix - Primary Selection"
+      width="95%"
+      top="2vh"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <TopologyEditor
+        v-if="showPrimaryMatrixEditor"
+        :node-count="primarySelectionConfig.nodeCount"
+        :topology="primarySelectionConfig.topology"
+        :branch-count="primarySelectionConfig.branchCount"
+        :default-reliability="primarySelectionConfig.reliability"
+        :initial-matrix="primarySelectionConfig.customReliabilityMatrix"
+        :proposer-id="primarySelectionConfig.proposerId"
+        :random-min="primarySelectionConfig.randomMin"
+        :random-max="primarySelectionConfig.randomMax"
+        @update:reliabilityMatrix="onPrimaryReliabilityMatrixUpdate"
+        @update:proposerId="onPrimaryProposerIdUpdate"
+        @update:randomRange="onPrimaryRandomRangeUpdate"
       />
     </el-dialog>
     
@@ -722,8 +962,8 @@
 
 <script>
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import { VideoPlay, Edit, Histogram } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { VideoPlay, Edit, Histogram, Refresh } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import axios from 'axios'
 import * as echarts from 'echarts'
@@ -750,7 +990,8 @@ export default {
     
     // 演示相关
     const demoDialogVisible = ref(false)
-    const showMatrixEditor = ref(false)
+    const showMatrixEditor = ref(false)  // Experiment 页面的矩阵编辑器
+    const showPrimaryMatrixEditor = ref(false)  // ✅ Primary Selection 页面的矩阵编辑器
     const simulating = ref(false)
     const simulationRounds = ref([])
     const currentRound = ref(1)
@@ -767,7 +1008,6 @@ export default {
     const chartContainer = ref(null)
     const showChartDialog = ref(false)
     const theoreticalSuccessRate = ref(0) // Theoretical Success Rate
-    const averageReliabilityTheoretical = ref(0) // 基于平均直连可靠度的理论值
     let chartInstance = null
     
     // All Proposers Experiment相关
@@ -776,6 +1016,14 @@ export default {
     const allProposersResults = ref([]) // 存储所有主节点的实验结果
     const allProposersChartContainer = ref(null)
     let allProposersChartInstance = null
+    
+    // 批量随机实验相关
+    const batchExperimentRunning = ref(false)
+    const batchExperimentRounds = ref(10)  // 默认10轮
+    const currentBatchRound = ref(0)
+    const batchExperimentResults = ref([])  // 存储所有批次的结果
+    const gainLossStatsDisplay = ref(false)  // 是否显示统计信息
+    const gainLossStatsHTML = ref('')  // 统计信息的HTML内容
     
     // 历史数据存储
     const historicalData = ref([])  // 存储历史实验数据
@@ -794,6 +1042,19 @@ export default {
       proposerId: 0,  // Primary node ID
       randomMin: 50,  // Random range minimum
       randomMax: 100  // Random range maximum
+    })
+    
+    // ✅ Primary Selection 页面独立配置
+    const primarySelectionConfig = reactive({
+      nodeCount: 6,
+      faultyNodes: 1,
+      reliability: 80,
+      topology: 'full',
+      branchCount: 2,
+      customReliabilityMatrix: null,  // 独立的可靠性矩阵
+      proposerId: 0,
+      randomMin: 50,
+      randomMax: 100
     })
     
     const formData = reactive({
@@ -1135,6 +1396,49 @@ export default {
       return rho
     }
     
+    // 计算单调拟合 + 误差评估（Isotonic Regression + Error Metrics）
+    const calculateIsotonicError = (predictor, actual) => {
+      if (predictor.length !== actual.length || predictor.length === 0) return null
+      
+      const n = predictor.length
+      
+      // 1. MAE (Mean Absolute Error) - 平均绝对误差
+      let mae = 0
+      for (let i = 0; i < n; i++) {
+        mae += Math.abs(actual[i] - predictor[i])
+      }
+      mae /= n
+      
+      // 2. RMSE (Root Mean Squared Error) - 均方根误差
+      let mse = 0
+      for (let i = 0; i < n; i++) {
+        mse += Math.pow(actual[i] - predictor[i], 2)
+      }
+      mse /= n
+      const rmse = Math.sqrt(mse)
+      
+      // 3. R² (Coefficient of Determination) - 决定系数
+      const meanActual = actual.reduce((sum, val) => sum + val, 0) / n
+      let ssTot = 0  // Total sum of squares
+      let ssRes = 0  // Residual sum of squares
+      for (let i = 0; i < n; i++) {
+        ssTot += Math.pow(actual[i] - meanActual, 2)
+        ssRes += Math.pow(actual[i] - predictor[i], 2)
+      }
+      const r2 = ssTot > 0 ? 1 - (ssRes / ssTot) : 0
+      
+      // 4. 计算相对误差（百分比）
+      const mape = (mae / meanActual) * 100  // Mean Absolute Percentage Error
+      
+      return {
+        mae: mae,
+        rmse: rmse,
+        r2: r2,
+        mape: mape,
+        meanActual: meanActual
+      }
+    }
+    
     // 计算相关性分析
     const calculateCorrelations = () => {
       if (historicalData.value.length < 3) {
@@ -1188,7 +1492,6 @@ export default {
       
       console.log('[Chart] initChart 开始')
       console.log(`  - theoreticalSuccessRate: ${theoreticalSuccessRate.value}`)
-      console.log(`  - averageReliabilityTheoretical: ${averageReliabilityTheoretical.value}`)
       
       // 构建系列数据
       const seriesData = [
@@ -1250,34 +1553,6 @@ export default {
         })
       }
       
-      // 如果有平均可靠度理论值，添加红色实线
-      if (averageReliabilityTheoretical.value > 0) {
-        seriesData.push({
-          name: 'Average Reliability Theoretical',
-          type: 'line',
-          data: rounds.map(round => [round, averageReliabilityTheoretical.value]),
-          lineStyle: {
-            color: '#E6001A',  // 深红色
-            width: 2,
-            type: 'solid'  // 实线
-          },
-          symbol: 'none',
-          itemStyle: {
-            color: '#E6001A'
-          },
-          markLine: {
-            silent: true,
-            symbol: 'none',
-            label: {
-              show: true,
-              position: 'end',
-              formatter: `平均值理论: ${averageReliabilityTheoretical.value.toFixed(2)}%`,
-              color: '#E6001A'
-            }
-          }
-        })
-      }
-      
       const option = {
         tooltip: {
           trigger: 'axis',
@@ -1293,7 +1568,6 @@ export default {
           data: (() => {
             const legendData = ['Experimental Success Rate']
             if (theoreticalSuccessRate.value > 0) legendData.push('Theoretical Success Rate')
-            if (averageReliabilityTheoretical.value > 0) legendData.push('Average Reliability Theoretical')
             return legendData
           })(),
           top: '5%',
@@ -1339,7 +1613,7 @@ export default {
     
     // 监听Experiment Results变化，更新图表
     watch(
-      () => [experimentResults.value.length, experimentRunning.value, theoreticalSuccessRate.value, averageReliabilityTheoretical.value],
+      () => [experimentResults.value.length, experimentRunning.value, theoreticalSuccessRate.value],
       () => {
         if (!experimentRunning.value && experimentResults.value.length > 0) {
           // Experiment结束后自动弹出图表
@@ -1379,7 +1653,7 @@ export default {
       }
     }
     
-    // 监听拓扑或节点数变化，清除自定义矩阵
+    // 监听拓扑或节点数变化，清除自定义矩阵 (Experiment 页面)
     watch(
       () => [experimentConfig.topology, experimentConfig.nodeCount, experimentConfig.branchCount],
       ([newTopology, newNodeCount, newBranchCount], [oldTopology, oldNodeCount, oldBranchCount]) => {
@@ -1387,6 +1661,17 @@ export default {
         if (oldTopology !== undefined) { // 跳过初始化时的触发
           experimentConfig.customReliabilityMatrix = null
           console.log(`[Experiment] Configuration changed (topology: ${oldTopology}→${newTopology}, nodes: ${oldNodeCount}→${newNodeCount}, branch: ${oldBranchCount}→${newBranchCount}), custom matrix cleared`)
+        }
+      }
+    )
+    
+    // ✅ 监听拓扑或节点数变化，清除自定义矩阵 (Primary Selection 页面)
+    watch(
+      () => [primarySelectionConfig.topology, primarySelectionConfig.nodeCount, primarySelectionConfig.branchCount],
+      ([newTopology, newNodeCount, newBranchCount], [oldTopology, oldNodeCount, oldBranchCount]) => {
+        if (oldTopology !== undefined) {
+          primarySelectionConfig.customReliabilityMatrix = null
+          console.log(`[Primary Selection] Configuration changed (topology: ${oldTopology}→${newTopology}, nodes: ${oldNodeCount}→${newNodeCount}, branch: ${oldBranchCount}→${newBranchCount}), custom matrix cleared`)
         }
       }
     )
@@ -1417,150 +1702,1109 @@ export default {
     })
     
     // Run All Proposers Experiment（依次让每个节点当主节点）
+    // Run All Proposers Experiment（依次让每个节点当主节点）
+    
     const runAllProposersExperiment = async () => {
       try {
         allProposersRunning.value = true
         experimentStopRequested.value = false
         allProposersResults.value = []
-        currentProposerIndex.value = 0
         
-        const nodeCount = experimentConfig.nodeCount
-        ElMessage.success(`Starting All Proposers Experiment: Testing ${nodeCount} proposers...`)
+        const nodeCount = primarySelectionConfig.nodeCount
+        const f = Math.floor((nodeCount - 1) / 3)
         
-        // 依次让每个节点当主节点
+        ElMessage.info(`开始计算所有${nodeCount}个节点作为主节点的理论成功率...`)
+        
+        console.log(`\n=== 轮换主节点实验：仅计算理论值（无机器人模拟）===`)
+        console.log(`节点数: ${nodeCount}, f: ${f}`)
+        
+        // 准备请求数据
+        const requestData = {
+          nodeCount: nodeCount,
+          faultyNodes: f
+        }
+        
+        // 如果有自定义可靠度矩阵，添加到请求中
+        if (primarySelectionConfig.customReliabilityMatrix) {
+          // ✅ 数据验证和转换：确保矩阵值在 0-1 范围
+          const matrix = primarySelectionConfig.customReliabilityMatrix
+          let needsConversion = false
+          
+          // 检查是否有值 > 1（说明是百分比格式）
+          for (let i = 0; i < matrix.length && !needsConversion; i++) {
+            for (let j = 0; j < matrix[i].length && !needsConversion; j++) {
+              if (matrix[i][j] > 1) {
+                needsConversion = true
+                console.warn(`⚠️ 检测到可靠性矩阵值 > 1: ${matrix[i][j]}，将转换为 0-1 范围`)
+              }
+            }
+          }
+          
+          // 如果需要转换，创建转换后的矩阵
+          if (needsConversion) {
+            const convertedMatrix = matrix.map(row => 
+              row.map(val => {
+                if (val > 1 && val <= 100) {
+                  return val / 100  // 百分比转概率
+                } else if (val > 100) {
+                  console.error(`⚠️ 异常值: ${val}，限制为 1.0`)
+                  return 1.0
+                }
+                return val
+              })
+            )
+            requestData.reliabilityMatrix = convertedMatrix
+            console.log('✅ 已将百分比格式转换为 0-1 范围')
+          } else {
+            requestData.reliabilityMatrix = matrix
+          }
+          
+          console.log('使用自定义可靠度矩阵')
+        } else {
+          requestData.reliability = primarySelectionConfig.reliability / 100  // ✅ 确保是 0-1 范围
+          console.log(`使用均匀可靠度: ${primarySelectionConfig.reliability}% (${requestData.reliability})`)
+        }
+        
+        // 遍历所有节点作为主节点，调用后端理论计算API
         for (let proposerId = 0; proposerId < nodeCount; proposerId++) {
           if (experimentStopRequested.value) {
-            ElMessage.warning('Experiment stopped by user')
+            ElMessage.warning('计算已被用户停止')
             break
           }
           
           currentProposerIndex.value = proposerId
-          console.log(`\n=== Running Experiment with Proposer ${proposerId} ===`)
-          
-          // 临时设置主节点ID
-          const originalProposerId = experimentConfig.proposerId
-          experimentConfig.proposerId = proposerId
           
           try {
-            // 创建ExperimentSession
-            const response = await axios.post('/api/sessions', {
-              nodeCount: experimentConfig.nodeCount,
-              faultyNodes: experimentConfig.faultyNodes,
-              robotNodes: experimentConfig.nodeCount,
-              topology: experimentConfig.topology,
-              branchCount: experimentConfig.branchCount,
-              proposalValue: 0,
-              proposalContent: `Experiment with Proposer ${proposerId}`,
-              maliciousProposer: false,
-              allowTampering: false,
-              messageDeliveryRate: experimentConfig.reliability,
+            // 调用后端理论计算API
+            const response = await axios.post('/api/theory/calculate', {
+              ...requestData,
               proposerId: proposerId
-            })
+            }, { timeout: 30000 })
             
-            const sessionId = response.data.sessionId
+            const theoreticalSuccessRate = response.data.theoreticalSuccessRate
+            const metrics = response.data.metrics  // 获取后端计算的指标
             
-            // Prepare请求数据
-            const requestData = {
-              rounds: experimentConfig.rounds
+            // ✅ 添加数据验证和调试
+            console.log(`\n[API Response Debug] 节点 ${proposerId}:`)
+            console.log(`  theoreticalSuccessRate (raw): ${theoreticalSuccessRate}`)
+            console.log(`  metrics.Q_pp (raw): ${metrics.Q_pp}`)
+            console.log(`  metrics.I_v (raw): ${metrics.I_v}`)
+            
+            // 检查数据是否异常
+            if (theoreticalSuccessRate > 1000 || theoreticalSuccessRate < 0 || isNaN(theoreticalSuccessRate)) {
+              console.error(`⚠️ 异常数据: theoreticalSuccessRate = ${theoreticalSuccessRate}`)
+              console.error(`  完整响应:`, response.data)
+              ElMessage.error(`节点 ${proposerId} 数据异常: ${theoreticalSuccessRate}`)
             }
             
-            // 如果使用Custom Matrix模式，添加矩阵数据
-            if (experimentConfig.reliabilityMode === 'custom' && experimentConfig.customReliabilityMatrix) {
-              requestData.customReliabilityMatrix = experimentConfig.customReliabilityMatrix
-              
-              // 计算平均直连可靠度
-              const n = experimentConfig.nodeCount
-              const topology = experimentConfig.topology
-              let directEdgeCount = 0
-              let totalReliability = 0
-              
-              // 遍历所有直连边（不包括对角线）
-              for (let i = 0; i < n; i++) {
-                for (let j = 0; j < n; j++) {
-                  if (i !== j) {
-                    // 检查是否是直连边
-                    const isDirect = (() => {
-                      if (topology === 'full') return true
-                      if (topology === 'ring') return Math.abs(i - j) === 1 || (i === 0 && j === n - 1) || (i === n - 1 && j === 0)
-                      if (topology === 'star') return i === 0 || j === 0
-                      if (topology === 'tree') {
-                        const branchCount = experimentConfig.branchCount
-                        const parentOfJ = Math.floor((j - 1) / branchCount)
-                        const parentOfI = Math.floor((i - 1) / branchCount)
-                        return (i === parentOfJ && j < n) || (j === parentOfI && i < n)
-                      }
-                      return false
-                    })()
-                    
-                    if (isDirect && experimentConfig.customReliabilityMatrix[i][j] > 0) {
-                      totalReliability += experimentConfig.customReliabilityMatrix[i][j]
-                      directEdgeCount++
-                    }
-                  }
-                }
-              }
-              
-              const avgReliability = directEdgeCount > 0 ? totalReliability / directEdgeCount : 0
-              requestData.averageDirectReliability = avgReliability
-              
-              console.log(`[All Proposers] Proposer ${proposerId}: 使用自定义可靠度矩阵, 平均直连可靠度=${(avgReliability * 100).toFixed(2)}%`)
+            if (metrics.Q_pp > 1000 || metrics.Q_pp < 0) {
+              console.error(`⚠️ 异常数据: Q_pp = ${metrics.Q_pp}`)
             }
             
-            // 运行实验
-            const batchResponse = await axios.post(
-              `/api/sessions/${sessionId}/run-batch-experiment`,
-              requestData,
-              { timeout: 300000 }
-            )
-            
-            // 保存结果
-            const batchData = batchResponse.data
+            // 保存结果（包含理论值和新指标）
             allProposersResults.value.push({
-              proposerId: proposerId,
-              theoreticalSuccessRate: batchData.theoreticalSuccessRate,
-              experimentalSuccessRate: batchData.experimentalSuccessRate,
-              averageReliabilityTheoretical: batchData.averageReliabilityTheoretical || 0,
-              successCount: batchData.successCount,
-              failureCount: batchData.failureCount,
-              totalRounds: batchData.totalRounds,
-              results: batchData.results
+              proposerId,
+              theoreticalSuccessRate: theoreticalSuccessRate,
+              metrics: metrics  // 包含 Q_pp, P_prep, Phi_min, Phi_q, I_v
             })
             
-            console.log(`Proposer ${proposerId}: Theoretical=${batchData.theoreticalSuccessRate}%, Experimental=${batchData.experimentalSuccessRate}%, AvgTheoretical=${batchData.averageReliabilityTheoretical || 0}%`)
-            
-            // 清理session
-            await axios.delete(`/api/sessions/${sessionId}`)
+            console.log(`主节点 ${proposerId}: 理论=${theoreticalSuccessRate.toFixed(2)}%, Q_pp=${metrics.Q_pp.toFixed(2)}%, Φ_q=${metrics.Phi_q.toFixed(2)}%, I(v)=${metrics.I_v.toFixed(2)}%`)
             
           } catch (error) {
-            console.error(`Experiment with Proposer ${proposerId} failed:`, error)
+            console.error(`计算主节点 ${proposerId} 失败:`, error)
             allProposersResults.value.push({
               proposerId: proposerId,
               error: error.message,
-              theoreticalSuccessRate: 0,
-              experimentalSuccessRate: 0
+              theoreticalSuccessRate: 0
             })
           }
-          
-          // 恢复原始主节点ID
-          experimentConfig.proposerId = originalProposerId
         }
+        
+        // ========== 计算 Q_v1：基于所有节点的 Q(v) 和 Q_w(v) ==========
+        console.log(`\n=== 开始计算 Q_v1 (tie-breaker) ===`)
+        
+        // 1. 提取所有节点的 Q(v) 和 Q_w(v)
+        const allQv = allProposersResults.value.map(r => r.metrics?.Q_pp || 0)
+        const allQw = allProposersResults.value.map(r => r.metrics?.Q_w || 0)
+        
+        // 🔍 调试：检查原始数据尺度
+        console.log(`[数据尺度检查]:`)
+        console.log(`  allQv (原始): [${allQv.slice(0, 3).map(v => v.toFixed(2)).join(', ')}...]`)
+        console.log(`  allQv 来源示例:`, allProposersResults.value.slice(0, 2).map((r, i) => 
+          `Node${i}: Q_pp=${r.metrics?.Q_pp?.toFixed(2) || 'undefined'}`
+        ))
+        
+        // 2. 排序找到 Top-M (M=3)
+        const qvWithIndex = allQv.map((val, idx) => ({ val, idx }))
+        qvWithIndex.sort((a, b) => b.val - a.val)
+        
+        console.log(`  排序后 Top2 (转换前): val[0]=${qvWithIndex[0].val}, val[1]=${qvWithIndex[1]?.val}`)
+        
+        const Q_1 = qvWithIndex[0].val / 100  // 转为 0-1 范围
+        const Q_2 = qvWithIndex[1]?.val / 100 || 0
+        
+        console.log(`  转换后 (0-1): Q_1=${Q_1.toFixed(6)}, Q_2=${Q_2.toFixed(6)}`)
+        
+        // 3. logit 函数
+        const logit = (q) => {
+          if (q <= 0 || q >= 1) {
+            console.warn(`  ⚠️ logit 边界警告: q=${q}，返回 0`)
+            return 0
+          }
+          return Math.log(q / (1 - q))
+        }
+        
+        // 🔍 详细的 logit 计算
+        const logit_1 = logit(Q_1)
+        const logit_2 = logit(Q_2)
+        console.log(`  logit 计算:`)
+        console.log(`    logit(${Q_1.toFixed(6)}) = ${logit_1.toFixed(6)}`)
+        console.log(`    logit(${Q_2.toFixed(6)}) = ${logit_2.toFixed(6)}`)
+        
+        // 4. 计算触发条件（改法 A：只用并列度触发）
+        const epsilon_r = 0.15  // logit 阈值：当 top1/top2 在 logit 尺度上几乎相同时触发
+        const logit_diff = Math.abs(logit_1 - logit_2)
+        const trigger = logit_diff < epsilon_r  // ✅ 去掉 tau_sat，只用并列度判断
+        
+        console.log(`\n[触发条件详细检查]:`)
+        console.log(`  Top1: 节点${qvWithIndex[0].idx} Q(v)=${(Q_1*100).toFixed(2)}%`)
+        console.log(`  Top2: 节点${qvWithIndex[1]?.idx} Q(v)=${(Q_2*100).toFixed(2)}%`)
+        console.log(`  Logit差距: ${logit_diff.toFixed(6)} (阈值: ${epsilon_r})`)
+        console.log(`  触发条件 (Δ_logit < ε_r): ${logit_diff.toFixed(6)} < ${epsilon_r} = ${trigger}`)
+        console.log(`  最终触发? ${trigger} (改法A: 只用并列度判断)`)
+        
+        // 5. 计算 Q_v1（触发时对所有节点统一修正，保持一致标尺）
+        const lambda = 0.3  // 改动强度 (建议 0.2~0.5)
+        
+        console.log(`\n[Q_v1 计算策略]:`)
+        console.log(`  触发状态: ${trigger}`)
+        console.log(`  策略: ${trigger ? '对所有节点统一修正 Q_v1 = Q(v) + λ·(Q_w - Q(v))' : '不修正，Q_v1 = Q(v)'}`)
+        
+        for (let i = 0; i < allProposersResults.value.length; i++) {
+          const Qv = allQv[i] / 100  // 0-1 范围
+          const Qw = allQw[i] / 100  // Q_strong = Q_w
+          
+          let Qv1
+          if (trigger) {
+            // ✅ 触发时：对所有节点统一修正，保持一致标尺
+            Qv1 = Qv + lambda * (Qw - Qv)
+          } else {
+            // 不触发：Q_v1 = Q(v)
+            Qv1 = Qv
+          }
+          
+          // 存储到 metrics 中
+          if (!allProposersResults.value[i].metrics) {
+            allProposersResults.value[i].metrics = {}
+          }
+          allProposersResults.value[i].metrics.Q_v1 = Qv1 * 100
+        }
+        
+        console.log(`✅ Q_v1 计算完成！`)
+        
+        // ========== 计算 I(v) 和 Q_2、Q_3（用于图表显示）==========
+        console.log(`\n[计算 I(v) 和 Q_2、Q_3 用于图表]`)
+        const lambda_iv = 0.4  // I(v) 加权系数
+        
+        for (let i = 0; i < allProposersResults.value.length; i++) {
+          const Qv = allQv[i] / 100
+          const Qw = allQw[i] / 100
+          
+          // I(v) = 0.6·Q(v) + 0.4·Q_w
+          const Iv = (1 - lambda_iv) * Qv + lambda_iv * Qw
+          allProposersResults.value[i].metrics.I_v = Iv * 100
+          
+          // Q_2 从后端返回（平均发送可靠度已在后端计算）
+          // 这里确保值存在
+          if (!allProposersResults.value[i].metrics.Q_2) {
+            allProposersResults.value[i].metrics.Q_2 = allProposersResults.value[i].metrics.Q_2 || 0
+          }
+          
+          // Q_3 从后端返回（极严格阈值 k=n-1 所有节点，已在后端计算）
+          // 这里确保值存在
+          if (!allProposersResults.value[i].metrics.Q_3) {
+            allProposersResults.value[i].metrics.Q_3 = allProposersResults.value[i].metrics.Q_3 || 0
+          }
+        }
+        
+        console.log(`✅ I(v)、Q_2、Q_3 计算完成！`)
         
         allProposersRunning.value = false
         experimentStopRequested.value = false
+        
+        console.log(`\n=== 计算完成！共${allProposersResults.value.length}个节点 ===`)
         
         // 绘制图表
         await nextTick()
         createAllProposersChart()
         
-        ElMessage.success(`All Proposers Experiment completed! Tested ${allProposersResults.value.length} proposers.`)
+        ElMessage.success('所有主节点的理论成功率计算完成！')
         
       } catch (error) {
-        console.error('All Proposers Experiment failed:', error)
-        ElMessage.error('All Proposers Experiment failed: ' + error.message)
+        console.error('计算失败:', error)
+        ElMessage.error(`计算失败: ${error.message}`)
         allProposersRunning.value = false
         experimentStopRequested.value = false
       }
     }
+    
+    // Batch Random Experiments - 批量随机实验
+    const runBatchRandomExperiments = async () => {
+      try {
+        batchExperimentRunning.value = true
+        experimentStopRequested.value = false
+        batchExperimentResults.value = []
+        currentBatchRound.value = 0
+        
+        const nodeCount = primarySelectionConfig.nodeCount
+        const f = Math.floor((nodeCount - 1) / 3)
+        const totalRounds = batchExperimentRounds.value
+        
+        // ✅ 添加 Q_v1 tie-breaker 触发统计
+        let qv1TiebreakerTriggered = 0  // 触发次数
+        let qv1SelectionDifferent = 0  // 选择不同次数
+
+        
+        ElMessage.info(`开始批量随机实验：${totalRounds}轮...`)
+        console.log(`\n=== 批量随机实验开始 ===`)
+        console.log(`实验轮数: ${totalRounds}, 节点数: ${nodeCount}, f: ${f}`)
+        
+        // 检查是否启用了自定义矩阵模式
+        if (!primarySelectionConfig.customReliabilityMatrix) {
+          ElMessage.error('批量随机实验需要先配置 Reliability Matrix！')
+          batchExperimentRunning.value = false
+          return
+        }
+        
+        // 获取拓扑编辑器中的随机参数
+        const minReliability = topologyRef.value?.minReliability || 0.5
+        const maxReliability = topologyRef.value?.maxReliability || 1.0
+        
+        console.log(`随机可靠度范围: [${minReliability}, ${maxReliability}]`)
+        
+        // ✅ Q_v1 Tie-breaker 配置
+        const epsilon_r = 0.15  // logit 尺度阈值（极严格）
+        
+        // 随机生成矩阵的辅助函数
+        const generateRandomMatrix = (n, min, max) => {
+          const matrix = []
+          for (let i = 0; i < n; i++) {
+            matrix[i] = []
+            for (let j = 0; j < n; j++) {
+              if (i === j) {
+                matrix[i][j] = 1.0  // 对角线为1
+              } else {
+                // 生成 [min, max] 范围内的随机值，步长1%
+                const range = max - min
+                const steps = Math.round(range / 0.01)
+                const randomStep = Math.floor(Math.random() * (steps + 1))
+                matrix[i][j] = Math.round((min + randomStep * 0.01) * 100) / 100
+              }
+            }
+          }
+          return matrix
+        }
+        
+        // 运行多轮实验
+        for (let round = 1; round <= totalRounds; round++) {
+          if (experimentStopRequested.value) {
+            ElMessage.warning('批量实验已被用户停止')
+            break
+          }
+          
+          currentBatchRound.value = round
+          console.log(`\n--- 批次 ${round}/${totalRounds} ---`)
+          
+          // 1. 随机生成新的可靠度矩阵
+          const newMatrix = generateRandomMatrix(nodeCount, minReliability, maxReliability)
+          
+          // 更新到 primarySelectionConfig（用于显示）
+          primarySelectionConfig.customReliabilityMatrix = newMatrix
+          
+          // 如果有拓扑编辑器引用，也更新它的矩阵（用于最后一轮的可视化）
+          if (topologyRef.value) {
+            topologyRef.value.reliabilityMatrix = JSON.parse(JSON.stringify(newMatrix))
+          }
+          
+          console.log(`生成新随机矩阵（第${round}轮）:`)
+          const avgReliability = newMatrix.reduce((sum, row, i) => {
+            return sum + row.reduce((rowSum, val, j) => {
+              return i === j ? rowSum : rowSum + val
+            }, 0)
+          }, 0) / (nodeCount * (nodeCount - 1))
+          console.log(`  平均可靠度: ${avgReliability.toFixed(3)}`)
+          console.log(`  矩阵预览 (前3x3):`, newMatrix.slice(0, 3).map(row => row.slice(0, 3).map(v => v.toFixed(2))))
+          
+          // 等待一小段时间确保状态更新
+          await nextTick()
+          
+          // 2. 对所有节点作为主节点运行实验
+          const roundResults = []
+          
+          for (let proposerId = 0; proposerId < nodeCount; proposerId++) {
+            if (experimentStopRequested.value) break
+            
+            currentProposerIndex.value = proposerId
+            
+            try {
+              // 调用后端理论计算API
+              const response = await axios.post('/api/theory/calculate', {
+                nodeCount: nodeCount,
+                faultyNodes: f,
+                reliabilityMatrix: newMatrix,
+                proposerId: proposerId
+              }, { timeout: 30000 })
+              
+              const theoreticalSuccessRate = response.data.theoreticalSuccessRate
+              const metrics = response.data.metrics
+              
+              roundResults.push({
+                proposerId,
+                theoreticalSuccessRate,
+                metrics
+              })
+              
+              console.log(`  节点 ${proposerId}: ${theoreticalSuccessRate.toFixed(2)}%`)
+              
+            } catch (error) {
+              console.error(`  节点 ${proposerId} 计算失败:`, error)
+              roundResults.push({
+                proposerId,
+                error: error.message,
+                theoreticalSuccessRate: 0
+              })
+            }
+          }
+          
+          // 计算本轮的 Gain Loss
+          const theoreticalData = roundResults.map(r => r.theoreticalSuccessRate)
+          const quorumData = roundResults.map(r => r.metrics?.Q_pp || 0)
+          const quorumDataW = roundResults.map(r => r.metrics?.Q_w || 0)  // Q_w
+          
+          const P_avg = theoreticalData.reduce((sum, val) => sum + val, 0) / theoreticalData.length
+          
+          // Q(v) 选择
+          const maxQvIndex = quorumData.indexOf(Math.max(...quorumData))
+          const P_best_Qv = theoreticalData[maxQvIndex]
+          
+          // Q_w(v) 选择
+          const maxQwIndex = quorumDataW.indexOf(Math.max(...quorumDataW))
+          const P_best_Qw = theoreticalData[maxQwIndex]
+          
+          // ✅ Q_2(v) 选择 (平均发送能力)
+          const q2Data = roundResults.map(r => r.metrics?.Q_2 || 0)
+          const maxQ2Index = q2Data.indexOf(Math.max(...q2Data))
+          const P_best_Q2 = theoreticalData[maxQ2Index]
+          
+          // ✅ Q_3(v) 选择 (极严格阈值 k=n-1, 所有节点)
+          const q3Data = roundResults.map(r => r.metrics?.Q_3 || 0)
+          const maxQ3Index = q3Data.indexOf(Math.max(...q3Data))
+          const P_best_Q3 = theoreticalData[maxQ3Index]
+          
+          // ========== Q_v1 计算：Q(v) + λ·(Q_strong - Q(v)) 【新公式】 ==========
+          // 🔍 调试：检查原始数据尺度
+          console.log(`\n[Q_v1 调试 - 数据尺度检查] Round ${round}:`)
+          console.log(`  quorumData (原始): [${quorumData.slice(0, 3).map(v => v.toFixed(2)).join(', ')}...]`)
+          console.log(`  quorumData 来源检查:`, roundResults.slice(0, 2).map((r, i) => 
+            `Node${i}: metrics.Q_pp=${r.metrics?.Q_pp?.toFixed(2) || 'undefined'}`
+          ))
+          
+          // 1. 排序找到 Top-M (M=3)
+          const qvWithIndex = quorumData.map((val, idx) => ({ val, idx }))
+          qvWithIndex.sort((a, b) => b.val - a.val)
+          
+          // 🔍 调试：检查转换前的值
+          console.log(`  排序后 Top2 (转换前): val[0]=${qvWithIndex[0].val}, val[1]=${qvWithIndex[1]?.val}`)
+          
+          const top1_qv = qvWithIndex[0].val / 100  // 转为 0-1 范围
+          const top2_qv = qvWithIndex.length > 1 ? qvWithIndex[1].val / 100 : 0
+          
+          // 🔍 调试：检查转换后的值
+          console.log(`  转换后 (0-1): top1_qv=${top1_qv.toFixed(6)}, top2_qv=${top2_qv.toFixed(6)}`)
+          
+          // 2. logit 函数
+          const logit = (q) => {
+            if (q <= 0 || q >= 1) {
+              console.warn(`  ⚠️ logit 边界警告: q=${q}，返回 0`)
+              return 0
+            }
+            const result = Math.log(q / (1 - q))
+            return result
+          }
+          
+          // 🔍 调试：详细的 logit 计算
+          const logit_top1 = logit(top1_qv)
+          const logit_top2 = logit(top2_qv)
+          console.log(`  logit 计算:`)
+          console.log(`    logit(${top1_qv.toFixed(6)}) = ${logit_top1.toFixed(6)}`)
+          console.log(`    logit(${top2_qv.toFixed(6)}) = ${logit_top2.toFixed(6)}`)
+          
+          // 3. 计算触发条件（改法 A：只用并列度触发）
+          const logit_diff = Math.abs(logit_top1 - logit_top2)
+          const trigger = logit_diff < epsilon_r  // ✅ 去掉 tau_sat，只用并列度判断
+          
+          console.log(`\n[Q_v1 触发条件详细检查]:`)
+          console.log(`  Top1: 节点${qvWithIndex[0].idx} Q(v)=${(top1_qv*100).toFixed(2)}%`)
+          console.log(`  Top2: 节点${qvWithIndex[1]?.idx} Q(v)=${(top2_qv*100).toFixed(2)}%`)
+          console.log(`  Logit差距: ${logit_diff.toFixed(6)} (阈值: ${epsilon_r})`)
+          console.log(`  触发条件 (Δ_logit < ε_r): ${logit_diff.toFixed(6)} < ${epsilon_r} = ${trigger}`)
+          console.log(`  最终触发? ${trigger} (改法A: 只用并列度判断)`)
+          
+          // 4. 计算 Q_v1 值（触发时对所有节点统一修正，保持一致标尺）
+          const lambda = 0.3  // 改动强度
+          const qv1Data = []
+          
+          for (let i = 0; i < roundResults.length; i++) {
+            const Qv = quorumData[i] / 100  // Q(v) in 0-1 range
+            const Qw = quorumDataW[i] / 100  // Q_strong = Q_w in 0-1 range
+            
+            let Qv1
+            if (trigger) {
+              // ✅ 触发时：对所有节点统一修正，保持一致标尺
+              Qv1 = Qv + lambda * (Qw - Qv)
+            } else {
+              // 不触发：Q_v1 = Q(v)
+              Qv1 = Qv
+            }
+            
+            qv1Data.push(Qv1 * 100)  // 转回百分比
+            
+            // 存储到 metrics 中
+            if (!roundResults[i].metrics) {
+              roundResults[i].metrics = {}
+            }
+            roundResults[i].metrics.Q_v1 = Qv1 * 100
+          }
+          
+          // 6. 基于 Q_v1 值选择最佳节点
+          const maxQv1Index = qv1Data.indexOf(Math.max(...qv1Data))
+          const P_best_Qv1 = theoreticalData[maxQv1Index]
+          
+          // 7. 统计触发情况并保存诊断信息
+          let qv1TriggeredThisRound = trigger
+          if (qv1TriggeredThisRound) {
+            qv1TiebreakerTriggered++
+            if (maxQv1Index !== maxQvIndex) {
+              qv1SelectionDifferent++
+            }
+          }
+          
+          // 🔍 保存 Q_v1 诊断信息（用于错误导出）
+          const qv1Diagnosis = {
+            top1_node: qvWithIndex[0].idx,
+            top2_node: qvWithIndex[1]?.idx || -1,
+            top1_Qv_raw: qvWithIndex[0].val,
+            top2_Qv_raw: qvWithIndex[1]?.val || 0,
+            top1_Qv_01: top1_qv,
+            top2_Qv_01: top2_qv,
+            logit_top1: logit_top1,
+            logit_top2: logit_top2,
+            logit_diff: logit_diff,
+            epsilon_r: epsilon_r,
+            trigger: trigger,  // ✅ 触发时对所有节点统一修正
+            lambda: lambda
+          }
+          
+          console.log(`  → Q_v1 选择: 节点${maxQv1Index} (Q_v1=${qv1Data[maxQv1Index].toFixed(2)}%)`)
+          
+          // ========== I(v) 计算：线性加权 I(v) = (1-λ)·Q(v) + λ·Q_w ==========
+          const lambda_iv = 0.4  // 加权系数
+          const ivData = []
+          
+          console.log(`\n[I(v) 计算] Round ${round}:`)
+          console.log(`  公式: I(v) = (1-${lambda_iv})·Q(v) + ${lambda_iv}·Q_w`)
+          
+          for (let i = 0; i < roundResults.length; i++) {
+            const Qv = quorumData[i] / 100  // Q(v) in 0-1 range
+            const Qw = quorumDataW[i] / 100  // Q_w in 0-1 range
+            
+            // I(v) = (1-λ)·Q(v) + λ·Q_w
+            const Iv = (1 - lambda_iv) * Qv + lambda_iv * Qw
+            ivData.push(Iv * 100)  // 转回百分比
+            
+            // 存储到 metrics 中
+            if (!roundResults[i].metrics) {
+              roundResults[i].metrics = {}
+            }
+            roundResults[i].metrics.I_v = Iv * 100
+          }
+          
+          // 选择 I(v) 最大的节点
+          const maxIvIndex = ivData.indexOf(Math.max(...ivData))
+          const P_best_Iv = theoreticalData[maxIvIndex]
+          
+          console.log(`  → I(v) 选择: 节点${maxIvIndex} (I(v)=${ivData[maxIvIndex].toFixed(2)}%)`)
+          
+          // 理论最优
+          const maxTheoryIndex = theoreticalData.indexOf(Math.max(...theoreticalData))
+          const P_best_Theory = theoreticalData[maxTheoryIndex]
+          
+          // 计算 I(v) 的 Gain Loss（使用绝对差值）
+          const Gain_Iv = P_best_Iv - P_avg
+          const Gain_Theory = P_best_Theory - P_avg
+          const Gain_Gap_Iv = Gain_Theory - Gain_Iv  // 绝对差值（%）
+          const Gain_Gap_Ratio = Gain_Gap_Iv  // 直接使用绝对差值
+          
+          // 计算 Q(v) 的 Gain Loss
+          const Gain_Qv = P_best_Qv - P_avg
+          const Gain_Gap_Qv = Gain_Theory - Gain_Qv
+          const Gain_Gap_Ratio_Qv = Gain_Gap_Qv  // 绝对差值
+          
+          // 计算 Q_v1 的 Gain Loss
+          const Gain_Qv1 = P_best_Qv1 - P_avg
+          const Gain_Gap_Qv1 = Gain_Theory - Gain_Qv1
+          const Gain_Gap_Ratio_Qv1 = Gain_Gap_Qv1  // 绝对差值
+          
+          // 计算 Q_w(v) 的 Gain Loss
+          const Gain_Qw = P_best_Qw - P_avg
+          const Gain_Gap_Qw = Gain_Theory - Gain_Qw
+          const Gain_Gap_Ratio_Qw = Gain_Gap_Qw  // 绝对差值
+          
+          // ✅ 计算 Q_2(v) 的 Gain Loss
+          const Gain_Q2 = P_best_Q2 - P_avg
+          const Gain_Gap_Q2 = Gain_Theory - Gain_Q2
+          const Gain_Gap_Ratio_Q2 = Gain_Gap_Q2  // 绝对差值
+          
+          // ✅ 计算 Q_3(v) 的 Gain Loss
+          const Gain_Q3 = P_best_Q3 - P_avg
+          const Gain_Gap_Q3 = Gain_Theory - Gain_Q3
+          const Gain_Gap_Ratio_Q3 = Gain_Gap_Q3  // 绝对差值
+          
+          // 保存本轮结果
+          batchExperimentResults.value.push({
+            round: round,
+            reliabilityMatrix: JSON.parse(JSON.stringify(newMatrix)),  // 深拷贝
+            results: roundResults,
+            gainLoss: {
+              optimalNode: maxTheoryIndex,
+              ivSelectsNode: maxIvIndex,
+              qvSelectsNode: maxQvIndex,
+              qv1SelectsNode: maxQv1Index,
+              qv1TiebreakerTriggered: qv1TriggeredThisRound,
+              qv1SelectionSameAsQv: maxQv1Index === maxQvIndex,
+              qwSelectsNode: maxQwIndex,
+              q2SelectsNode: maxQ2Index,
+              q3SelectsNode: maxQ3Index,
+              q3SelectsNode: maxQ3Index,  // ✅ 新增 Q_3
+              P_best_Theory: P_best_Theory,
+              P_best_Iv: P_best_Iv,
+              P_best_Qv: P_best_Qv,
+              P_best_Qv1: P_best_Qv1,
+              P_best_Iv: P_best_Iv,  // 新的 I(v)，原Q_fix
+              P_best_Qw: P_best_Qw,
+              P_best_Q2: P_best_Q2,
+              P_best_Q3: P_best_Q3,
+              P_avg: P_avg,
+              Gain_Theory: Gain_Theory,
+              Gain_Iv: Gain_Iv,  // 新的 I(v) gain
+              Gain_Qv: Gain_Qv,
+              Gain_Qv1: Gain_Qv1,
+              Gain_Qw: Gain_Qw,
+              Gain_Gap_Iv: Gain_Gap_Iv,  // 新的 I(v) gap
+              Gain_Gap_Ratio: Gain_Gap_Ratio,  // I(v) ratio
+              Gain_Gap_Qv: Gain_Gap_Qv,
+              Gain_Gap_Ratio_Qv: Gain_Gap_Ratio_Qv,
+              Gain_Gap_Qv1: Gain_Gap_Qv1,
+              Gain_Gap_Ratio_Qv1: Gain_Gap_Ratio_Qv1,
+              Gain_Gap_Qw: Gain_Gap_Qw,
+              Gain_Gap_Ratio_Qw: Gain_Gap_Ratio_Qw,
+              Gain_Q2: Gain_Q2,
+              Gain_Gap_Q2: Gain_Gap_Q2,
+              Gain_Gap_Ratio_Q2: Gain_Gap_Ratio_Q2,
+              Gain_Q3: Gain_Q3,
+              Gain_Gap_Q3: Gain_Gap_Q3,
+              Gain_Gap_Ratio_Q3: Gain_Gap_Ratio_Q3,
+              // 🔍 Q_v1 诊断信息（用于错误日志导出）
+              qv1Diagnosis: qv1Diagnosis
+            }
+          })
+          
+          console.log(`批次 ${round} 完成 - I(v): ${Gain_Gap_Ratio.toFixed(2)}%, Q(v): ${Gain_Gap_Ratio_Qv.toFixed(2)}%, Q_v1: ${Gain_Gap_Ratio_Qv1.toFixed(2)}%, Q_w(v): ${Gain_Gap_Ratio_Qw.toFixed(2)}%, Q_2(v): ${Gain_Gap_Ratio_Q2.toFixed(2)}%, Q_3(v): ${Gain_Gap_Ratio_Q3.toFixed(2)}%`)
+        }
+        
+        // 计算所有批次的 Gain Loss 统计数据
+        const gainLossValues = batchExperimentResults.value.map(r => r.gainLoss.Gain_Gap_Ratio)
+        const gainLossValuesQv = batchExperimentResults.value.map(r => r.gainLoss.Gain_Gap_Ratio_Qv)
+        const gainLossValuesQv1 = batchExperimentResults.value.map(r => r.gainLoss.Gain_Gap_Ratio_Qv1)
+        const gainLossValuesQw = batchExperimentResults.value.map(r => r.gainLoss.Gain_Gap_Ratio_Qw)
+        const gainLossValuesQ2 = batchExperimentResults.value.map(r => r.gainLoss.Gain_Gap_Ratio_Q2)
+        const gainLossValuesQ3 = batchExperimentResults.value.map(r => r.gainLoss.Gain_Gap_Ratio_Q3)
+        
+        // 统计完美匹配（Gain Loss ≈ 0）的次数
+        // I(v) Perfect Match
+        const perfectMatchCount = gainLossValues.filter(v => v < 0.001).length
+        const perfectMatchRate = (perfectMatchCount / gainLossValues.length) * 100
+        
+        // Q(v) Perfect Match
+        const perfectMatchCountQv = gainLossValuesQv.filter(v => v < 0.001).length
+        const perfectMatchRateQv = (perfectMatchCountQv / gainLossValuesQv.length) * 100
+        
+        // Q_v1 Perfect Match
+        const perfectMatchCountQv1 = gainLossValuesQv1.filter(v => v < 0.001).length
+        const perfectMatchRateQv1 = (perfectMatchCountQv1 / gainLossValuesQv1.length) * 100
+        
+        // Q_w(v) Perfect Match
+        const perfectMatchCountQw = gainLossValuesQw.filter(v => v < 0.001).length
+        const perfectMatchRateQw = (perfectMatchCountQw / gainLossValuesQw.length) * 100
+        
+        // Q_2(v) Perfect Match
+        const perfectMatchCountQ2 = gainLossValuesQ2.filter(v => v < 0.001).length
+        const perfectMatchRateQ2 = (perfectMatchCountQ2 / gainLossValuesQ2.length) * 100
+        
+        // Q_3(v) Perfect Match
+        const perfectMatchCountQ3 = gainLossValuesQ3.filter(v => v < 0.001).length
+        const perfectMatchRateQ3 = (perfectMatchCountQ3 / gainLossValuesQ3.length) * 100
+        
+        // 找到 I(v) Gain Loss 最大的那轮
+        const maxGainLossIndex = gainLossValues.indexOf(Math.max(...gainLossValues))
+        const worstCase = batchExperimentResults.value[maxGainLossIndex]
+        
+        // 找到 Q(v) Gain Loss 最大的那轮
+        const maxGainLossIndexQv = gainLossValuesQv.indexOf(Math.max(...gainLossValuesQv))
+        const worstCaseQv = batchExperimentResults.value[maxGainLossIndexQv]
+        
+        // 提取最差案例的所有节点数据 (I(v))
+        const worstCaseNodes = worstCase.results.map((r, idx) => ({
+          nodeId: r.proposerId,
+          theoreticalRate: r.theoreticalSuccessRate,
+          ivValue: r.metrics?.I_v || 0,
+          qvValue: r.metrics?.Q_pp || 0,
+          qwValue: r.metrics?.Q_w || 0,
+          isTheoryBest: idx === worstCase.gainLoss.optimalNode,
+          isIvSelected: idx === worstCase.gainLoss.ivSelectsNode,
+          isQvSelected: idx === worstCase.gainLoss.qvSelectsNode
+        }))
+        
+        const gainLossStats = {
+          mean: gainLossValues.reduce((sum, v) => sum + v, 0) / gainLossValues.length,
+          min: Math.min(...gainLossValues),
+          max: Math.max(...gainLossValues),
+          median: (() => {
+            const sorted = [...gainLossValues].sort((a, b) => a - b)
+            const mid = Math.floor(sorted.length / 2)
+            return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+          })(),
+          stdDev: (() => {
+            const mean = gainLossValues.reduce((sum, v) => sum + v, 0) / gainLossValues.length
+            const variance = gainLossValues.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / gainLossValues.length
+            return Math.sqrt(variance)
+          })(),
+          perfectMatchCount: perfectMatchCount,
+          perfectMatchRate: perfectMatchRate,
+          // Q(v) 统计
+          qv: {
+            mean: gainLossValuesQv.reduce((sum, v) => sum + v, 0) / gainLossValuesQv.length,
+            min: Math.min(...gainLossValuesQv),
+            max: Math.max(...gainLossValuesQv),
+            median: (() => {
+              const sorted = [...gainLossValuesQv].sort((a, b) => a - b)
+              const mid = Math.floor(sorted.length / 2)
+              return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+            })(),
+            stdDev: (() => {
+              const mean = gainLossValuesQv.reduce((sum, v) => sum + v, 0) / gainLossValuesQv.length
+              const variance = gainLossValuesQv.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / gainLossValuesQv.length
+              return Math.sqrt(variance)
+            })(),
+            perfectMatchCount: perfectMatchCountQv,
+            perfectMatchRate: perfectMatchRateQv
+          },
+          // Q_v1 统计
+          qv1: {
+            mean: gainLossValuesQv1.reduce((sum, v) => sum + v, 0) / gainLossValuesQv1.length,
+            min: Math.min(...gainLossValuesQv1),
+            max: Math.max(...gainLossValuesQv1),
+            median: (() => {
+              const sorted = [...gainLossValuesQv1].sort((a, b) => a - b)
+              const mid = Math.floor(sorted.length / 2)
+              return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+            })(),
+            stdDev: (() => {
+              const mean = gainLossValuesQv1.reduce((sum, v) => sum + v, 0) / gainLossValuesQv1.length
+              const variance = gainLossValuesQv1.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / gainLossValuesQv1.length
+              return Math.sqrt(variance)
+            })(),
+            perfectMatchCount: perfectMatchCountQv1,
+            perfectMatchRate: perfectMatchRateQv1
+          },
+          // Q_w(v) 统计
+          qw: {
+            mean: gainLossValuesQw.reduce((sum, v) => sum + v, 0) / gainLossValuesQw.length,
+            min: Math.min(...gainLossValuesQw),
+            max: Math.max(...gainLossValuesQw),
+            median: (() => {
+              const sorted = [...gainLossValuesQw].sort((a, b) => a - b)
+              const mid = Math.floor(sorted.length / 2)
+              return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+            })(),
+            stdDev: (() => {
+              const mean = gainLossValuesQw.reduce((sum, v) => sum + v, 0) / gainLossValuesQw.length
+              const variance = gainLossValuesQw.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / gainLossValuesQw.length
+              return Math.sqrt(variance)
+            })(),
+            perfectMatchCount: perfectMatchCountQw,
+            perfectMatchRate: perfectMatchRateQw
+          },
+          // Q_2(v) 统计
+          q2: {
+            mean: gainLossValuesQ2.reduce((sum, v) => sum + v, 0) / gainLossValuesQ2.length,
+            min: Math.min(...gainLossValuesQ2),
+            max: Math.max(...gainLossValuesQ2),
+            median: (() => {
+              const sorted = [...gainLossValuesQ2].sort((a, b) => a - b)
+              const mid = Math.floor(sorted.length / 2)
+              return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+            })(),
+            stdDev: (() => {
+              const mean = gainLossValuesQ2.reduce((sum, v) => sum + v, 0) / gainLossValuesQ2.length
+              const variance = gainLossValuesQ2.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / gainLossValuesQ2.length
+              return Math.sqrt(variance)
+            })(),
+            perfectMatchCount: perfectMatchCountQ2,
+            perfectMatchRate: perfectMatchRateQ2
+          },
+          // Q_3(v) 统计
+          q3: {
+            mean: gainLossValuesQ3.reduce((sum, v) => sum + v, 0) / gainLossValuesQ3.length,
+            min: Math.min(...gainLossValuesQ3),
+            max: Math.max(...gainLossValuesQ3),
+            median: (() => {
+              const sorted = [...gainLossValuesQ3].sort((a, b) => a - b)
+              const mid = Math.floor(sorted.length / 2)
+              return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+            })(),
+            stdDev: (() => {
+              const mean = gainLossValuesQ3.reduce((sum, v) => sum + v, 0) / gainLossValuesQ3.length
+              const variance = gainLossValuesQ3.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / gainLossValuesQ3.length
+              return Math.sqrt(variance)
+            })(),
+            perfectMatchCount: perfectMatchCountQ3,
+            perfectMatchRate: perfectMatchRateQ3
+          },
+          worstCase: {
+            round: worstCase.round,
+            gainLoss: worstCase.gainLoss.Gain_Gap_Ratio,
+            theoreticalBestRate: worstCase.gainLoss.P_best_Theory,
+            ivPredictedBestRate: worstCase.gainLoss.P_best_Iv,
+            qvPredictedBestRate: worstCase.gainLoss.P_best_Qv,
+            theoreticalBestNode: worstCase.gainLoss.optimalNode,
+            ivSelectedNode: worstCase.gainLoss.ivSelectsNode,
+            qvSelectedNode: worstCase.gainLoss.qvSelectsNode,
+            allNodes: worstCaseNodes
+          }
+        }
+        
+        console.log(`\n=== I(v) Gain Loss 统计数据 ===`)
+        console.log(`  - 平均值 (Mean): ${gainLossStats.mean.toFixed(3)}%`)
+        console.log(`  - 标准差 (Std Dev): ${gainLossStats.stdDev.toFixed(3)}%`)
+        console.log(`  - 最小值 (Min): ${gainLossStats.min.toFixed(3)}%`)
+        console.log(`  - 最大值 (Max): ${gainLossStats.max.toFixed(3)}%`)
+        console.log(`  - 中位数 (Median): ${gainLossStats.median.toFixed(3)}%`)
+        console.log(`  - 完美匹配: ${perfectMatchCount}/${gainLossValues.length} (${perfectMatchRate.toFixed(1)}%)`)
+        console.log(`\n=== Q(v) Gain Loss 统计数据 ===`)
+        console.log(`  - 平均值 (Mean): ${gainLossStats.qv.mean.toFixed(3)}%`)
+        console.log(`  - 标准差 (Std Dev): ${gainLossStats.qv.stdDev.toFixed(3)}%`)
+        console.log(`  - 最小值 (Min): ${gainLossStats.qv.min.toFixed(3)}%`)
+        console.log(`  - 最大值 (Max): ${gainLossStats.qv.max.toFixed(3)}%`)
+        console.log(`  - 中位数 (Median): ${gainLossStats.qv.median.toFixed(3)}%`)
+        console.log(`  - 完美匹配: ${perfectMatchCountQv}/${gainLossValuesQv.length} (${perfectMatchRateQv.toFixed(1)}%)`)
+        
+        // ✅ 添加 Q_v1 Tie-breaker 触发统计
+        console.log(`\n=== Q_v1 Tie-breaker 触发统计 ===`)
+        console.log(`  - 总轮次: ${totalRounds}`)
+        console.log(`  - Tie-breaker 触发: ${qv1TiebreakerTriggered} 次 (${(qv1TiebreakerTriggered/totalRounds*100).toFixed(1)}%)`)
+        console.log(`  - 选择与 Q(v) 不同: ${qv1SelectionDifferent} 次 (${qv1TiebreakerTriggered > 0 ? (qv1SelectionDifferent/qv1TiebreakerTriggered*100).toFixed(1) : 0}% of triggered)`)
+        console.log(`  - Q_v1 完美匹配: ${perfectMatchCountQv1}/${gainLossValuesQv1.length} (${perfectMatchRateQv1.toFixed(1)}%)`)
+        
+        if (qv1TiebreakerTriggered === 0) {
+          console.log(`  ⚠️ 警告：Tie-breaker 从未触发！`)
+          console.log(`     - 可能原因：epsilon_r 阈值(${epsilon_r})太小`)
+          console.log(`     - 建议：增大阈值到 0.1 或 0.2`)
+        } else if (qv1SelectionDifferent === 0) {
+          console.log(`  ⚠️ 警告：Tie-breaker 触发了 ${qv1TiebreakerTriggered} 次，但从未改变选择！`)
+          console.log(`     - 原因：E(v) 与 Q(v) 高度相关`)
+          console.log(`     - 建议：改用 Φ_q(v) 作为二级指标`)
+        } else {
+          console.log(`  ✅ Tie-breaker 工作正常：${qv1SelectionDifferent}/${qv1TiebreakerTriggered} 次改变了选择`)
+        }
+        
+        console.log(`  - 最差案例 (Round ${gainLossStats.worstCase.round}):`)
+        console.log(`    - Gain Loss: ${gainLossStats.worstCase.gainLoss.toFixed(3)}%`)
+        console.log(`    - 理论最优 (Node ${gainLossStats.worstCase.theoreticalBestNode}): ${gainLossStats.worstCase.theoreticalBestRate.toFixed(2)}%`)
+        console.log(`    - I(v)选择 (Node ${gainLossStats.worstCase.ivSelectedNode}): ${gainLossStats.worstCase.ivPredictedBestRate.toFixed(2)}%`)
+        console.log(`    - Q(v)选择 (Node ${gainLossStats.worstCase.qvSelectedNode}): ${gainLossStats.worstCase.qvPredictedBestRate.toFixed(2)}%`)
+        
+        // 保存统计数据
+        batchExperimentResults.value.gainLossStats = gainLossStats
+        
+        // 最后一轮的结果显示在图表上
+        if (batchExperimentResults.value.length > 0) {
+          const lastRound = batchExperimentResults.value[batchExperimentResults.value.length - 1]
+          allProposersResults.value = lastRound.results
+          
+          // 更新拓扑编辑器显示最后一轮的矩阵
+          if (topologyRef.value) {
+            topologyRef.value.reliabilityMatrix = JSON.parse(JSON.stringify(lastRound.reliabilityMatrix))
+            // 触发拓扑图重绘
+            await nextTick()
+            topologyRef.value.drawTopology?.()
+          }
+          
+          await nextTick()
+          createAllProposersChart()
+          
+          // 更新统计数据显示
+          gainLossStatsDisplay.value = true
+          gainLossStatsHTML.value = `<div style="text-align: left;">
+              <h3 style="margin-bottom: 15px;">Gain Loss Statistics (${batchExperimentResults.value.length} rounds)</h3>
+              
+              <h4 style="margin: 10px 0 8px 0; color: #409EFF;">I(v) Selection Performance</h4>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Mean</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.mean.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Std Dev</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.stdDev.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Min</td>
+                  <td style="padding: 8px; text-align: right; color: #67C23A;">${gainLossStats.min.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Max</td>
+                  <td style="padding: 8px; text-align: right; color: #F56C6C;">${gainLossStats.max.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Median</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.median.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 2px solid #409EFF; background-color: #f0f9ff;">
+                  <td style="padding: 8px; font-weight: bold; color: #409EFF;">Perfect Match (I(v))</td>
+                  <td style="padding: 8px; text-align: right; font-weight: bold; color: #409EFF;">${gainLossStats.perfectMatchCount}/${batchExperimentResults.value.length} (${gainLossStats.perfectMatchRate.toFixed(1)}%)</td>
+                </tr>
+              </table>
+              
+              <h4 style="margin: 15px 0 8px 0; color: #E6A23C;">Q(v) Selection Performance</h4>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Mean</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qv.mean.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Std Dev</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qv.stdDev.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Min</td>
+                  <td style="padding: 8px; text-align: right; color: #67C23A;">${gainLossStats.qv.min.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Max</td>
+                  <td style="padding: 8px; text-align: right; color: #F56C6C;">${gainLossStats.qv.max.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Median</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qv.median.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 2px solid #E6A23C; background-color: #fff7e6;">
+                  <td style="padding: 8px; font-weight: bold; color: #E6A23C;">Perfect Match (Q(v))</td>
+                  <td style="padding: 8px; text-align: right; font-weight: bold; color: #E6A23C;">${gainLossStats.qv.perfectMatchCount}/${batchExperimentResults.value.length} (${gainLossStats.qv.perfectMatchRate.toFixed(1)}%)</td>
+                </tr>
+              </table>
+              
+              <h4 style="margin: 15px 0 8px 0; color: #13C2C2;">Q_v1 Selection Performance (Q + Tie-breaker) ✨ NEW</h4>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Mean</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qv1.mean.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Std Dev</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qv1.stdDev.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Min</td>
+                  <td style="padding: 8px; text-align: right; color: #67C23A;">${gainLossStats.qv1.min.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Max</td>
+                  <td style="padding: 8px; text-align: right; color: #F56C6C;">${gainLossStats.qv1.max.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Median</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qv1.median.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 2px solid #13C2C2; background-color: #e6fafa;">
+                  <td style="padding: 8px; font-weight: bold; color: #13C2C2;">Perfect Match (Q_v1)</td>
+                  <td style="padding: 8px; text-align: right; font-weight: bold; color: #13C2C2;">${gainLossStats.qv1.perfectMatchCount}/${batchExperimentResults.value.length} (${gainLossStats.qv1.perfectMatchRate.toFixed(1)}%)</td>
+                </tr>
+              </table>
+              
+              <h4 style="margin: 15px 0 8px 0; color: #909399;">Q_w(v) Selection Performance ⭐ NEW</h4>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Mean</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qw.mean.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Std Dev</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qw.stdDev.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Min</td>
+                  <td style="padding: 8px; text-align: right; color: #67C23A;">${gainLossStats.qw.min.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Max</td>
+                  <td style="padding: 8px; text-align: right; color: #F56C6C;">${gainLossStats.qw.max.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Median</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.qw.median.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 2px solid #909399; background-color: #f4f4f5;">
+                  <td style="padding: 8px; font-weight: bold; color: #909399;">Perfect Match (Q_w(v))</td>
+                  <td style="padding: 8px; text-align: right; font-weight: bold; color: #909399;">${gainLossStats.qw.perfectMatchCount}/${batchExperimentResults.value.length} (${gainLossStats.qw.perfectMatchRate.toFixed(1)}%)</td>
+                </tr>
+              </table>
+              
+              <h4 style="margin: 15px 0 8px 0; color: #52C41A;">Q_2(v) Selection Performance 📊 NEW (Avg Outgoing)</h4>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Mean</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.q2.mean.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Std Dev</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.q2.stdDev.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Min</td>
+                  <td style="padding: 8px; text-align: right; color: #67C23A;">${gainLossStats.q2.min.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Max</td>
+                  <td style="padding: 8px; text-align: right; color: #F56C6C;">${gainLossStats.q2.max.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Median</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.q2.median.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 2px solid #52C41A; background-color: #f6ffed;">
+                  <td style="padding: 8px; font-weight: bold; color: #52C41A;">Perfect Match (Q_2(v))</td>
+                  <td style="padding: 8px; text-align: right; font-weight: bold; color: #52C41A;">${gainLossStats.q2.perfectMatchCount}/${batchExperimentResults.value.length} (${gainLossStats.q2.perfectMatchRate.toFixed(1)}%)</td>
+                </tr>
+              </table>
+              
+              <h4 style="margin: 15px 0 8px 0; color: #5B8FF9;">Q_3(v) Selection Performance 🔒 NEW (Ultra-Strict k=n-1)</h4>
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Mean</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.q3.mean.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Std Dev</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.q3.stdDev.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Min</td>
+                  <td style="padding: 8px; text-align: right; color: #67C23A;">${gainLossStats.q3.min.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Max</td>
+                  <td style="padding: 8px; text-align: right; color: #F56C6C;">${gainLossStats.q3.max.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 1px solid #ddd;">
+                  <td style="padding: 8px; font-weight: bold;">Median</td>
+                  <td style="padding: 8px; text-align: right;">${gainLossStats.q3.median.toFixed(3)}%</td>
+                </tr>
+                <tr style="border-bottom: 2px solid #5B8FF9; background-color: #f0f5ff;">
+                  <td style="padding: 8px; font-weight: bold; color: #5B8FF9;">Perfect Match (Q_3(v))</td>
+                  <td style="padding: 8px; text-align: right; font-weight: bold; color: #5B8FF9;">${gainLossStats.q3.perfectMatchCount}/${batchExperimentResults.value.length} (${gainLossStats.q3.perfectMatchRate.toFixed(1)}%)</td>
+                </tr>
+              </table>
+              
+              <div style="margin-top: 20px; padding: 12px; background-color: #fff3f3; border-left: 4px solid #F56C6C; border-radius: 4px;">
+                <h4 style="margin: 0 0 10px 0; color: #F56C6C; font-size: 14px;">Worst Case Analysis (Round ${gainLossStats.worstCase.round})</h4>
+                <table style="width: 100%; font-size: 13px; margin-bottom: 12px;">
+                  <tr>
+                    <td style="padding: 4px 0; color: #666;">Gain Loss (I(v)):</td>
+                    <td style="padding: 4px 0; text-align: right; font-weight: bold; color: #F56C6C;">${gainLossStats.worstCase.gainLoss.toFixed(2)}%</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0; color: #666;">Theory Best (Node ${gainLossStats.worstCase.theoreticalBestNode}):</td>
+                    <td style="padding: 4px 0; text-align: right; font-weight: bold;">${gainLossStats.worstCase.theoreticalBestRate.toFixed(2)}%</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0; color: #666;">I(v) Selects (Node ${gainLossStats.worstCase.ivSelectedNode}):</td>
+                    <td style="padding: 4px 0; text-align: right; font-weight: bold;">${gainLossStats.worstCase.ivPredictedBestRate.toFixed(2)}%</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 4px 0; color: #666;">Q(v) Selects (Node ${gainLossStats.worstCase.qvSelectedNode}):</td>
+                    <td style="padding: 4px 0; text-align: right; font-weight: bold;">${gainLossStats.worstCase.qvPredictedBestRate.toFixed(2)}%</td>
+                  </tr>
+                </table>
+                
+                <h5 style="margin: 10px 0 8px 0; color: #666; font-size: 12px;">All Nodes in This Round:</h5>
+                <div style="max-height: 300px; overflow-y: auto; border: 1px solid #eee; border-radius: 4px;">
+                  <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                    <thead style="position: sticky; top: 0; background-color: #fafafa; border-bottom: 2px solid #ddd;">
+                      <tr>
+                        <th style="padding: 6px 8px; text-align: left; font-weight: bold;">Node</th>
+                        <th style="padding: 6px 8px; text-align: right; font-weight: bold;">Theory (%)</th>
+                        <th style="padding: 6px 8px; text-align: right; font-weight: bold;">I(v) (%)</th>
+                        <th style="padding: 6px 8px; text-align: right; font-weight: bold;">Q(v) (%)</th>
+                        <th style="padding: 6px 8px; text-align: center; font-weight: bold;">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${gainLossStats.worstCase.allNodes.map(node => `
+                        <tr style="border-bottom: 1px solid #f0f0f0; ${node.isTheoryBest ? 'background-color: #f0f9ff;' : ''} ${node.isIvSelected && !node.isQvSelected ? 'background-color: #fff7e6;' : ''} ${node.isQvSelected && !node.isIvSelected ? 'background-color: #fef0f0;' : ''} ${node.isIvSelected && node.isQvSelected ? 'background-color: #f0fdf4;' : ''}">
+                          <td style="padding: 6px 8px; font-weight: ${node.isTheoryBest || node.isIvSelected || node.isQvSelected ? 'bold' : 'normal'};">Node ${node.nodeId}</td>
+                          <td style="padding: 6px 8px; text-align: right; ${node.isTheoryBest ? 'color: #409EFF; font-weight: bold;' : ''}">${node.theoreticalRate.toFixed(2)}</td>
+                          <td style="padding: 6px 8px; text-align: right; ${node.isIvSelected ? 'color: #E6A23C; font-weight: bold;' : ''}">${node.ivValue.toFixed(2)}</td>
+                          <td style="padding: 6px 8px; text-align: right; ${node.isQvSelected ? 'color: #F56C6C; font-weight: bold;' : ''}">${node.qvValue.toFixed(2)}</td>
+                          <td style="padding: 6px 8px; text-align: center; font-size: 11px;">
+                            ${node.isTheoryBest ? '<span style="color: #409EFF;">✓</span>' : ''}
+                            ${node.isIvSelected ? '<span style="color: #E6A23C;">★I</span>' : ''}
+                            ${node.isQvSelected ? '<span style="color: #F56C6C;">●Q</span>' : ''}
+                          </td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              
+              <div style="margin-top: 15px; padding: 10px; background-color: #f5f5f5; border-radius: 4px; font-size: 12px; color: #666;">
+                <strong>Legend:</strong><br/>
+                <strong style="color: #409EFF;">✓</strong> Theoretically optimal node |
+                <strong style="color: #E6A23C;">★I</strong> Node selected by I(v) |
+                <strong style="color: #F56C6C;">●Q</strong> Node selected by Q(v)
+              </div>
+            </div>`
+          
+          ElMessage.success(`Batch Experiments Completed! ${batchExperimentResults.value.length} rounds finished.`)
+        }
+        
+        batchExperimentRunning.value = false
+        experimentStopRequested.value = false
+        currentBatchRound.value = 0
+        
+        console.log(`\n=== 批量实验完成！共${batchExperimentResults.value.length}轮 ===`)
+        ElMessage.success(`批量随机实验完成！共${batchExperimentResults.value.length}轮`)
+        
+      } catch (error) {
+        console.error('批量实验失败:', error)
+        ElMessage.error(`批量实验失败: ${error.message}`)
+        batchExperimentRunning.value = false
+        experimentStopRequested.value = false
+        currentBatchRound.value = 0
+      }
+    }
+
     
     // Create All Proposers Comparison Chart
     const createAllProposersChart = () => {
@@ -1579,13 +2823,35 @@ export default {
       // 准备数据
       const proposerLabels = allProposersResults.value.map(r => `Node ${r.proposerId}`)
       const theoreticalData = allProposersResults.value.map(r => r.theoreticalSuccessRate)
-      const experimentalData = allProposersResults.value.map(r => r.experimentalSuccessRate)
-      const averageTheoreticalData = allProposersResults.value.map(r => r.averageReliabilityTheoretical || 0)
+      
+      console.log('图表数据:', { proposerLabels, theoreticalData })
+      
+      // 从后端返回的 metrics 中提取新指标
+      const quorumReachData = allProposersResults.value.map(r => r.metrics?.Q_pp || 0)
+      const quorumReachDataW = allProposersResults.value.map(r => r.metrics?.Q_w || 0)  // Q_w
+      const ivData = allProposersResults.value.map(r => r.metrics?.I_v || 0)  // I(v) - 新的复合指标
+      const q2Data = allProposersResults.value.map(r => r.metrics?.Q_2 || 0)  // Q_2
+      const q3Data = allProposersResults.value.map(r => r.metrics?.Q_3 || 0)  // Q_3 (严格阈值 k=n-1)
+      const phiMinData = allProposersResults.value.map(r => r.metrics?.Phi_min || 0)
+      const phiQData = allProposersResults.value.map(r => r.metrics?.Phi_q || 0)
+      const compositeData = allProposersResults.value.map(r => r.metrics?.I_v || 0)
+      
+      console.log('主节点选择指标（来自后端）:')
+      console.log('  - Q(v) 触达概率:', quorumReachData)
+      console.log('  - Q_w(v) 加权触达概率:', quorumReachDataW)
+      console.log('  - I(v) 复合指标 (0.6·Q + 0.4·Q_w):', ivData)
+      console.log('  - Q_2(v) 平均发送能力:', q2Data)
+      console.log('  - Φ_min(v) 最弱节点:', phiMinData)
+      console.log('  - Φ_q(v) Quorum聚合(尾概率):', phiQData)
+      console.log('  - I(v) 综合指标 (Q_pp×Φ_q):', compositeData)
       
       // 检查是否有平均理论值
-      const hasAverageTheoretical = averageTheoreticalData.some(val => val > 0)
+      const hasAverageTheoretical = false
       
       // 计算统计指标（基于理论成功率）
+      const n = experimentConfig.nodeCount
+      const f = experimentConfig.faultyNodes
+      
       const P_best = Math.max(...theoreticalData)
       const P_worst = Math.min(...theoreticalData)
       const P_avg = theoreticalData.reduce((sum, val) => sum + val, 0) / theoreticalData.length
@@ -1604,31 +2870,21 @@ export default {
       const sigma = Math.sqrt(variance)
       const CV = (sigma / P_avg) * 100
       
-      // 5. 节点层面不均匀性（CV_out）- 如果有自定义矩阵
+      // 5. 节点层面不均匀性（CV_I(v)）- 基于 I(v) Composite Index
       let CV_out = 0
       let CV_link = 0
+      
+      // 计算 I(v) 的变异系数
+      if (compositeData.length > 0) {
+        const meanComposite = compositeData.reduce((sum, val) => sum + val, 0) / compositeData.length
+        const varianceComposite = compositeData.reduce((sum, val) => sum + Math.pow(val - meanComposite, 2), 0) / compositeData.length
+        const stdDevComposite = Math.sqrt(varianceComposite)
+        CV_out = (stdDevComposite / meanComposite) * 100
+      }
       
       if (experimentConfig.reliabilityMode === 'custom' && experimentConfig.customReliabilityMatrix) {
         const matrix = experimentConfig.customReliabilityMatrix
         const n = matrix.length
-        
-        // 计算每个节点的平均出链可靠度
-        const p_out = []
-        for (let i = 0; i < n; i++) {
-          let sum = 0
-          for (let j = 0; j < n; j++) {
-            if (i !== j) {
-              sum += matrix[i][j]
-            }
-          }
-          p_out.push(sum / (n - 1))
-        }
-        
-        // 计算 p_out 的均值和标准差
-        const mu_out = p_out.reduce((sum, val) => sum + val, 0) / n
-        const var_out = p_out.reduce((sum, val) => sum + Math.pow(val - mu_out, 2), 0) / n
-        const sigma_out = Math.sqrt(var_out)
-        CV_out = (sigma_out / mu_out) * 100
         
         // 6. 链路层面不均匀性（CV_link）
         const allLinks = []
@@ -1646,13 +2902,98 @@ export default {
         CV_link = (sigma_link / mu_link) * 100
       }
       
+      // 计算各指标与理论成功率的 Spearman 相关系数
+      const rho_Qv_Theory = calculateSpearman(quorumReachData, theoreticalData)
+      const rho_Qw_Theory = calculateSpearman(quorumReachDataW, theoreticalData)
+      const rho_Iv_Theory = calculateSpearman(ivData, theoreticalData)  // I(v) 相关性
+      const rho_Q2_Theory = calculateSpearman(q2Data, theoreticalData)
+      const rho_Q3_Theory = calculateSpearman(q3Data, theoreticalData)
+      
+      // 计算误差指标: I(v) 预测理论成功率的准确性
+      const errorMetrics_Iv = calculateIsotonicError(compositeData, theoreticalData)
+      
+      // 计算误差指标: Q(v) 预测理论成功率的准确性
+      const errorMetrics_Qv = calculateIsotonicError(quorumReachData, theoreticalData)
+      
+      // ========== 新增：计算 I(v) 选择 vs 理论最优选择的 Gain 差异 ==========
+      // 1. 找到 I(v) 最大值对应的节点
+      const maxIvIndex = compositeData.indexOf(Math.max(...compositeData))
+      const P_best_Iv = theoreticalData[maxIvIndex]  // I(v)最大节点的理论成功率
+      
+      // 2. 找到理论成功率最大值
+      const maxTheoryIndex = theoreticalData.indexOf(Math.max(...theoreticalData))
+      const P_best_Theory = theoreticalData[maxTheoryIndex]  // 理论最优
+      
+      // 3. 计算排序位次，用于标记不匹配的节点
+      // 为每个节点计算在 I(v) 和理论值中的排名
+      const ivRanking = ivData.map((v, idx) => ({ idx, value: v }))
+        .sort((a, b) => b.value - a.value)
+        .map((item, rank) => ({ idx: item.idx, rank: rank }))
+        .sort((a, b) => a.idx - b.idx)
+        .map(item => item.rank)
+      
+      const theoryRanking = theoreticalData.map((v, idx) => ({ idx, value: v }))
+        .sort((a, b) => b.value - a.value)
+        .map((item, rank) => ({ idx: item.idx, rank: rank }))
+        .sort((a, b) => a.idx - b.idx)
+        .map(item => item.rank)
+      
+      console.log('\n=== 排序对比 ===')
+      console.log('  I(v) 排名:', ivRanking)
+      console.log('  理论值排名:', theoryRanking)
+      
+      // 3. 平均理论成功率（随机选择的基准）
+      // P_avg 已在前面计算
+      
+      // 4. 计算 Gain
+      const Gain_Iv = P_best_Iv - P_avg  // 使用 I(v) 选择的增益
+      const Gain_Theory = P_best_Theory - P_avg  // 理论最优增益
+      
+      // 5. 计算差异比例
+      const Gain_Gap = Gain_Theory - Gain_Iv  // 绝对差距
+      const Gain_Gap_Ratio = Gain_Theory > 0 ? (Gain_Gap / Gain_Theory) * 100 : 0  // 相对差距（百分比）
+      
+      console.log('\n=== I(v) 选择 vs 理论最优选择 ===')
+      console.log(`  - 理论最优节点: Node ${maxTheoryIndex}, 成功率: ${P_best_Theory.toFixed(2)}%`)
+      console.log(`  - I(v) 最大节点: Node ${maxIvIndex}, 成功率: ${P_best_Iv.toFixed(2)}%`)
+      console.log(`  - 平均成功率（随机选择）: ${P_avg.toFixed(2)}%`)
+      console.log(`  - Gain (理论最优): ${Gain_Theory.toFixed(2)}%`)
+      console.log(`  - Gain (I(v) 选择): ${Gain_Iv.toFixed(2)}%`)
+      console.log(`  - Gain 差距: ${Gain_Gap.toFixed(2)}%`)
+      console.log(`  - Gain 损失比例: ${Gain_Gap_Ratio.toFixed(2)}% (越小越好)`)
+      
       console.log('[All Proposers Chart] 统计指标:')
-      console.log(`  - Range: ${deltaRange.toFixed(2)}%`)
       console.log(`  - Expected Gain: ${gainAvg.toFixed(2)}%`)
       console.log(`  - Worst-case Improvement: ${gainWorst.toFixed(2)}%`)
-      console.log(`  - CV: ${CV.toFixed(2)}%`)
-      console.log(`  - CV_out (Node-level): ${CV_out.toFixed(2)}%`)
-      console.log(`  - CV_link (Link-level): ${CV_link.toFixed(2)}%`)
+      console.log(`\n=== 各指标与Theory的Spearman相关性 ===`)
+      console.log(`  - ρ(Q(v), Theory): ${rho_Qv_Theory?.toFixed(4) || 'N/A'}`)
+      console.log(`  - ρ(Q_w(v), Theory): ${rho_Qw_Theory?.toFixed(4) || 'N/A'}`)
+      console.log(`  - ρ(I(v), Theory): ${rho_Iv_Theory?.toFixed(4) || 'N/A'}`)
+      console.log(`  - ρ(Q_2(v), Theory): ${rho_Q2_Theory?.toFixed(4) || 'N/A'}`)
+      console.log(`  - ρ(Q_3(v), Theory): ${rho_Q3_Theory?.toFixed(4) || 'N/A'} [严格阈值 k=n-1]`)
+      
+      console.log('\n=== 预测准确性对比 ===')
+      if (errorMetrics_Qv) {
+        console.log(`  Q(v) 预测误差:`)
+        console.log(`    * MAE: ${errorMetrics_Qv.mae.toFixed(3)}%`)
+        console.log(`    * RMSE: ${errorMetrics_Qv.rmse.toFixed(3)}%`)
+        console.log(`    * R²: ${errorMetrics_Qv.r2.toFixed(4)}`)
+      }
+      if (errorMetrics_Iv) {
+        console.log(`  I(v) 预测误差:`)
+        console.log(`    * MAE: ${errorMetrics_Iv.mae.toFixed(3)}%`)
+        console.log(`    * RMSE: ${errorMetrics_Iv.rmse.toFixed(3)}%`)
+        console.log(`    * R²: ${errorMetrics_Iv.r2.toFixed(4)}`)
+      }
+      if (errorMetrics_Iv && errorMetrics_Qv) {
+        const mae_improvement = ((errorMetrics_Qv.mae - errorMetrics_Iv.mae) / errorMetrics_Qv.mae * 100)
+        const rmse_improvement = ((errorMetrics_Qv.rmse - errorMetrics_Iv.rmse) / errorMetrics_Qv.rmse * 100)
+        const r2_improvement = ((errorMetrics_Iv.r2 - errorMetrics_Qv.r2) / (1 - errorMetrics_Qv.r2) * 100)
+        console.log(`  相对改进:`)
+        console.log(`    * MAE改进: ${mae_improvement > 0 ? '+' : ''}${mae_improvement.toFixed(2)}% (${mae_improvement > 0 ? 'I(v)更好 ✓' : 'Q(v)更好'})`)
+        console.log(`    * RMSE改进: ${rmse_improvement > 0 ? '+' : ''}${rmse_improvement.toFixed(2)}%`)
+        console.log(`    * R²改进: ${r2_improvement > 0 ? '+' : ''}${r2_improvement.toFixed(2)}%`)
+      }
       
       // 保存历史数据（仅在自定义矩阵模式下，且标志为 true）
       if (shouldSaveHistory.value && experimentConfig.reliabilityMode === 'custom' && CV_out > 0 && CV_link > 0) {
@@ -1672,9 +3013,6 @@ export default {
       
       console.log('[All Proposers Chart] 数据准备:')
       console.log('  - Theoretical:', theoreticalData)
-      console.log('  - Experimental:', experimentalData)
-      console.log('  - Average Theoretical:', averageTheoreticalData)
-      console.log('  - Has Average Theoretical:', hasAverageTheoretical)
       
       // 为每个节点生成不同的颜色
       const colors = [
@@ -1699,18 +3037,40 @@ export default {
             fontWeight: 600
           }
         },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: {
+            type: 'cross',
+            label: {
+              backgroundColor: '#6a7985'
+            }
+          },
+          formatter: function(params) {
+            let result = `<div style="font-weight: bold; margin-bottom: 8px;">${params[0].axisValue}</div>`
+            params.forEach(param => {
+              const value = param.value !== undefined ? param.value : 0
+              result += `
+                <div style="display: flex; align-items: center; margin: 4px 0;">
+                  <span style="display: inline-block; width: 10px; height: 10px; background-color: ${param.color}; border-radius: 50%; margin-right: 8px;"></span>
+                  <span style="flex: 1;">${param.seriesName}:</span>
+                  <span style="font-weight: bold; margin-left: 8px;">${value.toFixed(2)}%</span>
+                </div>`
+            })
+            return result
+          }
+        },
         // 添加图形元素显示统计指标
         graphic: [
           {
             type: 'group',
             right: 40,
-            top: 40,  // 和legend同高，在右侧
+            top: -50,  // 大幅向上移动，让框的底部高于图表区域
             children: [
               {
                 type: 'rect',
                 shape: {
                   width: 280,
-                  height: correlationResults.value ? 190 : 155  // 动态调整高度
+                  height: 180  // 调整高度：标题 + 2项指标 + 分隔线 + 4项相关性
                 },
                 style: {
                   fill: 'rgba(255, 255, 255, 0.95)',
@@ -1731,7 +3091,7 @@ export default {
               {
                 type: 'text',
                 style: {
-                  text: `Range (Δ): ${deltaRange.toFixed(2)}%`,
+                  text: `Expected Gain: ${gainAvg.toFixed(2)}%`,
                   font: '12px sans-serif',
                   fill: '#666'
                 },
@@ -1741,7 +3101,7 @@ export default {
               {
                 type: 'text',
                 style: {
-                  text: `Expected Gain: ${gainAvg.toFixed(2)}%`,
+                  text: `Worst-case Improvement: ${gainWorst.toFixed(2)}%`,
                   font: '12px sans-serif',
                   fill: '#666'
                 },
@@ -1749,53 +3109,110 @@ export default {
                 top: 50
               },
               {
-                type: 'text',
-                style: {
-                  text: `Worst-case Improvement: ${gainWorst.toFixed(2)}%`,
-                  font: '12px sans-serif',
-                  fill: '#666'
+                type: 'line',
+                shape: {
+                  x1: 10,
+                  y1: 70,
+                  x2: 270,
+                  y2: 70
                 },
-                left: 10,
-                top: 70
+                style: {
+                  stroke: '#ddd',
+                  lineWidth: 1
+                }
               },
               {
                 type: 'text',
                 style: {
-                  text: `CV: ${CV.toFixed(2)}%`,
+                  text: `ρ(Q(v), Theory): ${rho_Qv_Theory?.toFixed(3) || 'N/A'}`,
                   font: '12px sans-serif',
-                  fill: '#666'
+                  fill: '#67C23A',
+                  fontWeight: 'bold'
                 },
                 left: 10,
-                top: 90
+                top: 78
               },
               {
                 type: 'text',
                 style: {
-                  text: `CV_out (Node): ${CV_out.toFixed(2)}%`,
-                  font: '12px sans-serif',
-                  fill: '#666'
+                  text: rho_Qv_Theory !== null && rho_Qv_Theory !== undefined ? (Math.abs(rho_Qv_Theory) > 0.7 ? '(Strong ✓)' : Math.abs(rho_Qv_Theory) > 0.4 ? '(Moderate)' : '(Weak)') : '',
+                  font: '10px sans-serif',
+                  fill: '#999'
                 },
-                left: 10,
-                top: 110
+                left: 190,
+                top: 80
               },
               {
                 type: 'text',
                 style: {
-                  text: `CV_link (Link): ${CV_link.toFixed(2)}%`,
+                  text: `ρ(Q_w(v), Theory): ${rho_Qw_Theory?.toFixed(3) || 'N/A'}`,
                   font: '12px sans-serif',
-                  fill: '#666'
+                  fill: '#13C2C2',
+                  fontWeight: 'bold'
                 },
                 left: 10,
-                top: 130
+                top: 98
               },
-              // 添加分隔线
+              {
+                type: 'text',
+                style: {
+                  text: rho_Qw_Theory !== null && rho_Qw_Theory !== undefined ? (Math.abs(rho_Qw_Theory) > 0.7 ? '(Strong ✓)' : Math.abs(rho_Qw_Theory) > 0.4 ? '(Moderate)' : '(Weak)') : '',
+                  font: '10px sans-serif',
+                  fill: '#999'
+                },
+                left: 210,
+                top: 100
+              },
+              {
+                type: 'text',
+                style: {
+                  text: `ρ(I(v), Theory): ${rho_Iv_Theory?.toFixed(3) || 'N/A'}`,
+                  font: '12px sans-serif',
+                  fill: '#E6A23C',
+                  fontWeight: 'bold'
+                },
+                left: 10,
+                top: 118
+              },
+              {
+                type: 'text',
+                style: {
+                  text: rho_Iv_Theory !== null && rho_Iv_Theory !== undefined ? (Math.abs(rho_Iv_Theory) > 0.7 ? '(Strong ✓)' : Math.abs(rho_Iv_Theory) > 0.4 ? '(Moderate)' : '(Weak)') : '',
+                  font: '10px sans-serif',
+                  fill: '#999'
+                },
+                left: 220,
+                top: 120
+              },
+              {
+                type: 'text',
+                style: {
+                  text: `ρ(Q_3(v), Theory): ${rho_Q3_Theory?.toFixed(3) || 'N/A'}`,
+                  font: '12px sans-serif',
+                  fill: '#909399',
+                  fontWeight: 'bold'
+                },
+                left: 10,
+                top: 138
+              },
+              {
+                type: 'text',
+                style: {
+                  text: rho_Q3_Theory !== null && rho_Q3_Theory !== undefined ? (Math.abs(rho_Q3_Theory) > 0.7 ? '(Strong ✓)' : Math.abs(rho_Q3_Theory) > 0.4 ? '(Moderate)' : '(Weak)') : '',
+                  font: '10px sans-serif',
+                  fill: '#999'
+                },
+                left: 210,
+                top: 140
+              },
+              // 历史数据相关性分析
               ...(correlationResults.value ? [{
                 type: 'line',
                 shape: {
                   x1: 10,
-                  y1: 148,
+                  y1: 315,
                   x2: 270,
-                  y2: 148
+                  y2: 315
                 },
                 style: {
                   stroke: '#ddd',
@@ -1811,7 +3228,7 @@ export default {
                   fontWeight: 'bold'
                 },
                 left: 10,
-                top: 153
+                top: 323
               },
               {
                 type: 'text',
@@ -1822,7 +3239,7 @@ export default {
                   fontWeight: 'bold'
                 },
                 left: 10,
-                top: 168
+                top: 341
               },
               {
                 type: 'text',
@@ -1832,7 +3249,7 @@ export default {
                   fill: '#999'
                 },
                 left: 235,
-                top: 153
+                top: 323
               }] : [])
             ]
           }
@@ -1851,19 +3268,17 @@ export default {
           }
         },
         legend: {
-          data: (() => {
-            const legendData = ['Theoretical Success Rate', 'Experimental Success Rate']
-            if (hasAverageTheoretical) legendData.push('Average Reliability Theoretical')
-            return legendData
-          })(),
+          data: ['Theoretical Success Rate', 'Q(v) Quorum Reach', 'Q_w(v) Weighted Quorum', 'I(v) (0.6·Q+0.4·Q_w)', 'Q_3(v) Strict Quorum'],
           top: 40,
-          left: 'center'
+          left: 10,
+          right: 330,
+          itemGap: 15
         },
         grid: {
           left: '3%',
           right: '4%',
           bottom: '3%',
-          top: '180px',  // 增加顶部空间，为统计框留出位置
+          top: '240px',  // 进一步增加顶部空间，确保统计框完全在图表上方
           containLabel: true
         },
         xAxis: {
@@ -1887,90 +3302,110 @@ export default {
           {
             name: 'Theoretical Success Rate',
             type: 'bar',
-            data: theoreticalData,
-            itemStyle: {
-              color: function(params) {
-                return colors[params.dataIndex % colors.length]
-              },
-              opacity: 0.6
+            data: theoreticalData.map((value, idx) => {
+              const isIvSelected = idx === maxIvIndex
+              const isTheoryBest = idx === maxTheoryIndex
+              const rankMismatch = ivRanking[idx] !== theoryRanking[idx]
+              
+              return {
+                value: value,
+                itemStyle: {
+                  color: isIvSelected ? '#FA8C16' : colors[idx % colors.length],
+                  opacity: isIvSelected ? 1 : 0.75,
+                  borderColor: rankMismatch ? '#FF0000' : (isIvSelected ? '#FA8C16' : 'rgba(255,255,255,0.3)'),
+                  borderWidth: rankMismatch ? 5 : (isIvSelected ? 4 : 1),
+                  shadowBlur: isIvSelected ? 25 : 0,
+                  shadowColor: isIvSelected ? 'rgba(250, 140, 22, 0.9)' : 'transparent',
+                  shadowOffsetX: 0,
+                  shadowOffsetY: 0
+                }
+              }
+            }),
+            emphasis: {
+              itemStyle: {
+                shadowBlur: 25,
+                shadowColor: 'rgba(0,0,0,0.4)'
+              }
             },
             label: {
               show: true,
-              position: 'top',
-              formatter: '{c}%',
-              fontSize: 10,
-              color: '#000',  // 黑色
-              fontWeight: 600  // 加粗
+              position: 'inside',
+              formatter: function(params) {
+                const isIvSelected = params.dataIndex === maxIvIndex
+                const val = params.value
+                return isIvSelected ? `${val}%\n(I(v)选中)` : `${val}%`
+              },
+              fontSize: 11,
+              color: '#000',
+              fontWeight: 600
             }
           },
           {
-            name: 'Experimental Success Rate',
-            type: 'bar',
-            data: experimentalData,
+            name: 'Q(v) Quorum Reach',
+            type: 'line',
+            data: quorumReachData,
             itemStyle: {
-              color: function(params) {
-                return colors[params.dataIndex % colors.length]
-              },
-              borderColor: '#000',
-              borderWidth: 2
+              color: '#67C23A'
+            },
+            symbol: 'circle',
+            symbolSize: 6,
+            lineStyle: {
+              width: 2
             },
             label: {
-              show: true,
-              position: 'top',
-              formatter: '{c}%',
-              fontSize: 10,
-              color: '#000',  // 黑色
-              fontWeight: 600  // 加粗
+              show: false
             }
           },
-          // 添加平均可靠度理论值线（如果存在）
-          ...(hasAverageTheoretical ? [{
-            name: 'Average Reliability Theoretical',
+          {
+            name: 'Q_w(v) Weighted Quorum',
             type: 'line',
-            data: averageTheoreticalData,
-            lineStyle: {
-              color: '#E6001A',  // 深红色
-              width: 1.5,  // 更细的线
-              type: 'solid'
+            data: quorumReachDataW,
+            itemStyle: {
+              color: '#13C2C2'
             },
-            symbol: 'none',  // 不显示数据点
-            itemStyle: { 
-              color: '#E6001A'
+            symbol: 'triangle',
+            symbolSize: 7,
+            lineStyle: {
+              width: 2,
+              type: 'dashed'
             },
             label: {
-              show: false  // 不显示每个点的标签
+              show: false
+            }
+          },
+          {
+            name: 'I(v) (0.6·Q+0.4·Q_w)',
+            type: 'line',
+            data: ivData,
+            itemStyle: {
+              color: '#E6A23C'
             },
-            markLine: {
-              silent: false,
-              symbol: ['none', 'none'],  // 两端都不显示箭头
-              label: {
-                show: true,
-                position: 'insideEndBottom',  // 标签在左端底部
-                distance: -50,  // 向左偏移
-                formatter: function() {
-                  // 取第一个非零值作为标签
-                  const avgValue = averageTheoreticalData.find(v => v > 0) || 0
-                  return `${avgValue.toFixed(2)}%`  // 只显示数值
-                },
-                color: '#E6001A',
-                fontSize: 11,
-                fontWeight: 'bold',
-                backgroundColor: 'transparent',  // 透明背景
-                padding: [2, 4]
-              },
-              lineStyle: {
-                color: '#E6001A',
-                width: 1.5,  // 更细的线
-                type: 'solid'
-              },
-              data: [
-                {
-                  yAxis: averageTheoreticalData[0]  // 使用第一个值作为基准线
-                }
-              ]
+            symbol: 'diamond',
+            symbolSize: 8,
+            lineStyle: {
+              width: 2
             },
-            z: 0  // 最低层级，显示在所有柱状图和标签后面
-          }] : [])
+            label: {
+              show: false
+            }
+          },
+          {
+            name: 'Q_3(v) Strict Quorum',
+            type: 'line',
+            data: q3Data,
+            itemStyle: {
+              color: '#909399'
+            },
+            symbol: 'rect',
+            symbolSize: 6,
+            lineStyle: {
+              width: 2,
+              type: 'dotted'
+            },
+            label: {
+              show: false
+            }
+          }
         ]
       }
       
@@ -1990,7 +3425,6 @@ export default {
         currentExperimentRound.value = 0
         experimentResults.value = []
         theoreticalSuccessRate.value = 0
-        averageReliabilityTheoretical.value = 0  // 清空平均可靠度理论值
         
         ElMessage.success('Starting experiment, please wait...')
         
@@ -2059,8 +3493,7 @@ export default {
           requestData.averageDirectReliability = avgReliability
           
           console.log('[Experiment] 使用自定义可靠度矩阵')
-          console.log(`[Experiment] 直连边数量: ${directEdgeCount}, 平均可靠度: ${(avgReliability * 100).toFixed(2)}%`)
-          console.log(`[Experiment] 发送 averageDirectReliability = ${avgReliability}`)
+          console.log(`[Experiment] 直连边数量: ${directEdgeCount}`)
         }
         
         // 调用批量ExperimentAPI，后端一次性Complete所有Round
@@ -2076,27 +3509,18 @@ export default {
         const batchData = batchResponse.data
         experimentResults.value = batchData.results
         theoreticalSuccessRate.value = batchData.theoreticalSuccessRate
-        averageReliabilityTheoretical.value = batchData.averageReliabilityTheoretical || 0
         currentExperimentRound.value = experimentConfig.rounds
         
         console.log(`[Experiment] 批量ExperimentComplete:`)
         console.log(`  - Total Rounds: ${batchData.totalRounds}`)
         console.log(`  - Success: ${batchData.successCount}`)
         console.log(`  - Failure: ${batchData.failureCount}`)
-        console.log(`  - Experimental Success Rate: ${batchData.experimentalSuccessRate}%`)
-        console.log(`  - Theoretical Success Rate: ${batchData.theoreticalSuccessRate}%`)
-        console.log(`  - Average Reliability Theoretical: ${batchData.averageReliabilityTheoretical || 'N/A'}%`)
-        if (batchData.averageReliabilityTheoretical) {
-          console.log(`  ✓ 平均可靠度理论值已设置: ${averageReliabilityTheoretical.value}%`)
-        } else {
-          console.log(`  ✗ 未收到平均可靠度理论值`)
-        }
         
         experimentRunning.value = false
         await cleanupExperimentSession()
         experimentStopRequested.value = false
         
-        ElMessage.success(`Experiment completed!Success Rate: ${batchData.experimentalSuccessRate}% (理论: ${batchData.theoreticalSuccessRate}%)`)
+        ElMessage.success(`Experiment completed! Success Rate (理论: ${batchData.theoreticalSuccessRate}%)`)
         
       } catch (error) {
         console.error('Experiment failed:', error)
@@ -2355,6 +3779,44 @@ export default {
       console.log('[Experiment] Random Range Updated:', { min, max })
     }
     
+    // ✅ Handle Reliability Matrix update (Primary Selection 页面)
+    const onPrimaryReliabilityMatrixUpdate = (matrix) => {
+      primarySelectionConfig.customReliabilityMatrix = matrix
+      
+      const n = matrix.length
+      let nonZeroCount = 0
+      let totalReliability = 0
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          if (i !== j && matrix[i][j] > 0) {
+            nonZeroCount++
+            totalReliability += matrix[i][j]
+          }
+        }
+      }
+      const avgReliability = nonZeroCount > 0 ? totalReliability / nonZeroCount : 0
+      
+      console.log(`[Primary Selection] Reliability Matrix Updated:`)
+      console.log(`  - Size: ${n}x${n}`)
+      console.log(`  - Non-zero connections: ${nonZeroCount}`)
+      console.log(`  - Average reliability: ${(avgReliability * 100).toFixed(1)}%`)
+      console.log(`  - Topology: ${primarySelectionConfig.topology}`)
+    }
+    
+    // ✅ Handle Proposer ID update (Primary Selection 页面)
+    const onPrimaryProposerIdUpdate = (proposerId) => {
+      primarySelectionConfig.proposerId = proposerId
+      console.log('[Primary Selection] Proposer ID Updated:', proposerId)
+      ElMessage.success(`Primary Selection - Primary node switched to Node ${proposerId}`)
+    }
+    
+    // ✅ Handle Random Range update (Primary Selection 页面)
+    const onPrimaryRandomRangeUpdate = ({ min, max }) => {
+      primarySelectionConfig.randomMin = min
+      primarySelectionConfig.randomMax = max
+      console.log('[Primary Selection] Random Range Updated:', { min, max })
+    }
+    
     // Export Experiment Results
     const exportResults = () => {
       const data = {
@@ -2383,26 +3845,44 @@ export default {
     const exportAllProposersResults = () => {
       const data = {
         config: {
-          nodeCount: experimentConfig.nodeCount,
-          faultyNodes: experimentConfig.faultyNodes,
-          topology: experimentConfig.topology,
-          reliability: experimentConfig.reliability,
-          rounds: experimentConfig.rounds,
-          reliabilityMode: experimentConfig.reliabilityMode
+          nodeCount: primarySelectionConfig.nodeCount,
+          faultyNodes: primarySelectionConfig.faultyNodes,
+          topology: primarySelectionConfig.topology,
+          reliability: primarySelectionConfig.reliability
         },
-        proposersComparison: allProposersResults.value.map(r => ({
+        proposersComparison: allProposersResults.value.map((r, idx) => ({
           proposerId: r.proposerId,
           theoreticalSuccessRate: r.theoreticalSuccessRate,
-          experimentalSuccessRate: r.experimentalSuccessRate,
-          difference: r.experimentalSuccessRate - r.theoreticalSuccessRate,
-          successCount: r.successCount,
-          failureCount: r.failureCount,
-          totalRounds: r.totalRounds
+          // 主节点选择指标
+          Q_v: r.metrics?.Q_pp || null,      // Q(v): Quorum 触达概率
+          I_v: r.metrics?.I_v || null,       // I(v): 复合指标 (0.6·Q + 0.4·Q_w)
+          Q_w: r.metrics?.Q_w || null,       // Q_w(v): 加权 Quorum 触达概率
+          Q_2: r.metrics?.Q_2 || null,       // Q_2(v): 平均发送可靠度
+          Q_3: r.metrics?.Q_3 || null,       // Q_3(v): 严格阈值 (k=n-1)
+          // Prepare 阶段辅助指标
+          Phi_q: r.metrics?.Phi_q || null,   // Φ_q(v): Quorum 聚合（尾概率）
+          Phi_min: r.metrics?.Phi_min || null, // Φ_min(v): 最弱节点瓶颈
+          s_v: r.metrics?.s_v || null        // s(v): 节点在线率
         })),
         summary: {
           totalProposersTested: allProposersResults.value.length,
           averageTheoreticalRate: (allProposersResults.value.reduce((sum, r) => sum + r.theoreticalSuccessRate, 0) / allProposersResults.value.length).toFixed(2),
-          averageExperimentalRate: (allProposersResults.value.reduce((sum, r) => sum + r.experimentalSuccessRate, 0) / allProposersResults.value.length).toFixed(2)
+          // 平均指标
+          averageIv: allProposersResults.value.length > 0 && allProposersResults.value[0].metrics
+            ? (allProposersResults.value.reduce((sum, r) => sum + (r.metrics?.I_v || 0), 0) / allProposersResults.value.length).toFixed(2)
+            : null,
+          averageQv: allProposersResults.value.length > 0 && allProposersResults.value[0].metrics
+            ? (allProposersResults.value.reduce((sum, r) => sum + (r.metrics?.Q_pp || 0), 0) / allProposersResults.value.length).toFixed(2)
+            : null,
+          averageQw: allProposersResults.value.length > 0 && allProposersResults.value[0].metrics
+            ? (allProposersResults.value.reduce((sum, r) => sum + (r.metrics?.Q_w || 0), 0) / allProposersResults.value.length).toFixed(2)
+            : null,
+          averageQ2: allProposersResults.value.length > 0 && allProposersResults.value[0].metrics
+            ? (allProposersResults.value.reduce((sum, r) => sum + (r.metrics?.Q_2 || 0), 0) / allProposersResults.value.length).toFixed(2)
+            : null,
+          averageQ3: allProposersResults.value.length > 0 && allProposersResults.value[0].metrics
+            ? (allProposersResults.value.reduce((sum, r) => sum + (r.metrics?.Q_3 || 0), 0) / allProposersResults.value.length).toFixed(2)
+            : null
         }
       }
       
@@ -2415,6 +3895,373 @@ export default {
       URL.revokeObjectURL(url)
       
       ElMessage.success('Comparison results exported successfully!')
+    }
+    
+    // 导出批量实验结果
+    const exportBatchExperimentResults = () => {
+      if (batchExperimentResults.value.length === 0) {
+        ElMessage.warning('No batch experiment data to export')
+        return
+      }
+      
+      const gainLossStats = batchExperimentResults.value.gainLossStats || {}
+      
+      const data = {
+        config: {
+          nodeCount: primarySelectionConfig.nodeCount,
+          faultyNodes: primarySelectionConfig.faultyNodes,
+          topology: primarySelectionConfig.topology,
+          batchRounds: batchExperimentResults.value.length
+        },
+        gainLossStatistics: {
+          iv: {
+            mean: gainLossStats.mean?.toFixed(3),
+            stdDev: gainLossStats.stdDev?.toFixed(3),
+            min: gainLossStats.min?.toFixed(3),
+            max: gainLossStats.max?.toFixed(3),
+            median: gainLossStats.median?.toFixed(3),
+            perfectMatchCount: gainLossStats.perfectMatchCount,
+            perfectMatchRate: gainLossStats.perfectMatchRate?.toFixed(1) + '%'
+          },
+          iw: {
+            mean: gainLossStats.iw?.mean?.toFixed(3),
+            stdDev: gainLossStats.iw?.stdDev?.toFixed(3),
+            min: gainLossStats.iw?.min?.toFixed(3),
+            max: gainLossStats.iw?.max?.toFixed(3),
+            median: gainLossStats.iw?.median?.toFixed(3),
+            perfectMatchCount: gainLossStats.iw?.perfectMatchCount,
+            perfectMatchRate: gainLossStats.iw?.perfectMatchRate?.toFixed(1) + '%'
+          },
+          qv: {
+            mean: gainLossStats.qv?.mean?.toFixed(3),
+            stdDev: gainLossStats.qv?.stdDev?.toFixed(3),
+            min: gainLossStats.qv?.min?.toFixed(3),
+            max: gainLossStats.qv?.max?.toFixed(3),
+            median: gainLossStats.qv?.median?.toFixed(3),
+            perfectMatchCount: gainLossStats.qv?.perfectMatchCount,
+            perfectMatchRate: gainLossStats.qv?.perfectMatchRate?.toFixed(1) + '%'
+          },
+          qv1: {  // ✅ 新增
+            mean: gainLossStats.qv1?.mean?.toFixed(3),
+            stdDev: gainLossStats.qv1?.stdDev?.toFixed(3),
+            min: gainLossStats.qv1?.min?.toFixed(3),
+            max: gainLossStats.qv1?.max?.toFixed(3),
+            median: gainLossStats.qv1?.median?.toFixed(3),
+            perfectMatchCount: gainLossStats.qv1?.perfectMatchCount,
+            perfectMatchRate: gainLossStats.qv1?.perfectMatchRate?.toFixed(1) + '%'
+          },
+          qw: {
+            mean: gainLossStats.qw?.mean?.toFixed(3),
+            stdDev: gainLossStats.qw?.stdDev?.toFixed(3),
+            min: gainLossStats.qw?.min?.toFixed(3),
+            max: gainLossStats.qw?.max?.toFixed(3),
+            median: gainLossStats.qw?.median?.toFixed(3),
+            perfectMatchCount: gainLossStats.qw?.perfectMatchCount,
+            perfectMatchRate: gainLossStats.qw?.perfectMatchRate?.toFixed(1) + '%'
+          },
+          worstCase: {
+            round: gainLossStats.worstCase?.round,
+            gainLoss_Iv: gainLossStats.worstCase?.gainLoss?.toFixed(2) + '%',
+            theoreticalBestNode: gainLossStats.worstCase?.theoreticalBestNode,
+            theoreticalBestRate: gainLossStats.worstCase?.theoreticalBestRate?.toFixed(2) + '%',
+            ivSelectedNode: gainLossStats.worstCase?.ivSelectedNode,
+            ivPredictedBestRate: gainLossStats.worstCase?.ivPredictedBestRate?.toFixed(2) + '%',
+            qvSelectedNode: gainLossStats.worstCase?.qvSelectedNode,
+            qvPredictedBestRate: gainLossStats.worstCase?.qvPredictedBestRate?.toFixed(2) + '%',
+            allNodes: gainLossStats.worstCase?.allNodes?.map(node => ({
+              nodeId: node.nodeId,
+              theoreticalRate: node.theoreticalRate.toFixed(2) + '%',
+              ivValue: node.ivValue.toFixed(2) + '%',
+              iwValue: node.iwValue.toFixed(2) + '%',
+              qvValue: node.qvValue.toFixed(2) + '%',
+              qwValue: node.qwValue.toFixed(2) + '%',
+              isTheoryBest: node.isTheoryBest,
+              isIvSelected: node.isIvSelected,
+              isQvSelected: node.isQvSelected
+            })) || []
+          },
+          unit: '%'
+        },
+        batchResults: batchExperimentResults.value.map(batch => ({
+          round: batch.round,
+          gainLoss: {
+            optimalNode: batch.gainLoss.optimalNode,
+            ivSelectsNode: batch.gainLoss.ivSelectsNode,
+            iwSelectsNode: batch.gainLoss.iwSelectsNode,
+            qvSelectsNode: batch.gainLoss.qvSelectsNode,
+            qv1SelectsNode: batch.gainLoss.qv1SelectsNode,  // ✅ 新增
+            qv1TiebreakerTriggered: batch.gainLoss.qv1TiebreakerTriggered,  // ✅ 新增
+            qv1SelectionSameAsQv: batch.gainLoss.qv1SelectionSameAsQv,  // ✅ 新增
+            qwSelectsNode: batch.gainLoss.qwSelectsNode,
+            P_best_Theory: batch.gainLoss.P_best_Theory.toFixed(2),
+            P_best_Iv: batch.gainLoss.P_best_Iv.toFixed(2),
+            P_best_Qv: batch.gainLoss.P_best_Qv.toFixed(2),
+            P_best_Qv1: batch.gainLoss.P_best_Qv1.toFixed(2),
+            P_best_Qw: batch.gainLoss.P_best_Qw.toFixed(2),
+            P_avg: batch.gainLoss.P_avg.toFixed(2),
+            Gain_Theory: batch.gainLoss.Gain_Theory.toFixed(2),
+            Gain_Iv: batch.gainLoss.Gain_Iv.toFixed(2),
+            Gain_Qv: batch.gainLoss.Gain_Qv.toFixed(2),
+            Gain_Qv1: batch.gainLoss.Gain_Qv1.toFixed(2),
+            Gain_Qw: batch.gainLoss.Gain_Qw.toFixed(2),
+            Gain_Gap_Iv: batch.gainLoss.Gain_Gap_Iv.toFixed(2),
+            Gain_Gap_Ratio: batch.gainLoss.Gain_Gap_Ratio.toFixed(3) + '%',
+            Gain_Gap_Qv: batch.gainLoss.Gain_Gap_Qv.toFixed(2),
+            Gain_Gap_Ratio_Qv: batch.gainLoss.Gain_Gap_Ratio_Qv.toFixed(3) + '%',
+            Gain_Gap_Qv1: batch.gainLoss.Gain_Gap_Qv1.toFixed(2),
+            Gain_Gap_Ratio_Qv1: batch.gainLoss.Gain_Gap_Ratio_Qv1.toFixed(3) + '%',
+            Gain_Gap_Qw: batch.gainLoss.Gain_Gap_Qw.toFixed(2),
+            Gain_Gap_Ratio_Qw: batch.gainLoss.Gain_Gap_Ratio_Qw.toFixed(3) + '%'
+          },
+          nodeResults: batch.results.map(r => ({
+            proposerId: r.proposerId,
+            theoreticalSuccessRate: r.theoreticalSuccessRate.toFixed(2),
+            I_v: r.metrics?.I_v?.toFixed(2) || 'N/A',
+            Q_v: r.metrics?.Q_pp?.toFixed(2) || 'N/A',
+            Q_w: r.metrics?.Q_w?.toFixed(2) || 'N/A'
+          }))
+        }))
+      }
+      
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `batch-experiments-${Date.now()}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      
+      ElMessage.success('Batch experiment results exported successfully!')
+    }
+    
+    // 导出 Gain Loss 不为 0 的轮次数据
+    const exportMismatchedRounds = () => {
+      if (batchExperimentResults.value.length === 0) {
+        ElMessage.warning('No batch experiment data to export')
+        return
+      }
+      
+      // 分类统计 - 扩展到四种指标
+      const allCorrect = []      // 四种指标都正确
+      const anyMismatched = []   // 至少一种指标选错
+      
+      batchExperimentResults.value.forEach(batch => {
+        const ivWrong = batch.gainLoss.Gain_Gap_Ratio >= 0.001
+        const iwWrong = batch.gainLoss.Gain_Gap_Ratio_Iw >= 0.001
+        const qvWrong = batch.gainLoss.Gain_Gap_Ratio_Qv >= 0.001
+        const qv1Wrong = batch.gainLoss.Gain_Gap_Ratio_Qv1 >= 0.001
+        const qwWrong = batch.gainLoss.Gain_Gap_Ratio_Qw >= 0.001
+        const q2Wrong = batch.gainLoss.Gain_Gap_Ratio_Q2 >= 0.001
+        const q3Wrong = batch.gainLoss.Gain_Gap_Ratio_Q3 >= 0.001
+        
+        // 记录哪些指标选错了
+        const wrongMetrics = []
+        if (ivWrong) wrongMetrics.push('I(v)')
+        if (qvWrong) wrongMetrics.push('Q(v)')
+        if (qv1Wrong) wrongMetrics.push('Q_v1(v)')
+        if (qwWrong) wrongMetrics.push('Q_w(v)')
+        if (q2Wrong) wrongMetrics.push('Q_2(v)')
+        if (q3Wrong) wrongMetrics.push('Q_3(v)')
+        if (qwWrong) wrongMetrics.push('Q_w(v)')
+        if (q2Wrong) wrongMetrics.push('Q_2(v)')  // ✅ 新增 Q_2
+        
+        if (wrongMetrics.length > 0) {
+          anyMismatched.push({
+            ...batch,
+            wrongMetrics: wrongMetrics,
+            wrongCount: wrongMetrics.length
+          })
+        } else {
+          allCorrect.push(batch)
+        }
+      })
+      
+      const totalMismatched = anyMismatched.length
+      
+      if (totalMismatched === 0) {
+        ElMessage.info('All rounds are perfect matches for all metrics (I(v), Q(v), Q_v1, Q_w, Q_2, Q_3)! No mismatched data to export.')
+        return
+      }
+      
+      // 按轮次排序
+      const sortedMismatched = anyMismatched.sort((a, b) => a.round - b.round)
+      
+      // 统计各指标的错误次数（删除I_w和Q_fix）
+      let ivErrors = 0, qvErrors = 0, qv1Errors = 0, qwErrors = 0, q2Errors = 0, q3Errors = 0
+      anyMismatched.forEach(batch => {
+        if (batch.gainLoss.Gain_Gap_Ratio >= 0.001) ivErrors++
+        if (batch.gainLoss.Gain_Gap_Ratio_Qv >= 0.001) qvErrors++
+        if (batch.gainLoss.Gain_Gap_Ratio_Qv1 >= 0.001) qv1Errors++
+        if (batch.gainLoss.Gain_Gap_Ratio_Qw >= 0.001) qwErrors++
+        if (batch.gainLoss.Gain_Gap_Ratio_Q2 >= 0.001) q2Errors++
+        if (batch.gainLoss.Gain_Gap_Ratio_Q3 >= 0.001) q3Errors++
+      })
+      
+      const data = {
+        summary: {
+          totalRounds: batchExperimentResults.value.length,
+          perfectMatchAll: allCorrect.length,
+          mismatchedTotal: totalMismatched,
+          mismatchRate: ((totalMismatched / batchExperimentResults.value.length) * 100).toFixed(1) + '%',
+          errorsByMetric: {
+            'I(v)': {
+              count: ivErrors,
+              rate: ((ivErrors / batchExperimentResults.value.length) * 100).toFixed(1) + '%'
+            },
+            'Q(v)': {
+              count: qvErrors,
+              rate: ((qvErrors / batchExperimentResults.value.length) * 100).toFixed(1) + '%'
+            },
+            'Q_v1(v)': {
+              count: qv1Errors,
+              rate: ((qv1Errors / batchExperimentResults.value.length) * 100).toFixed(1) + '%'
+            },
+            'Q_w(v)': {
+              count: qwErrors,
+              rate: ((qwErrors / batchExperimentResults.value.length) * 100).toFixed(1) + '%'
+            },
+            'Q_2(v)': {
+              count: q2Errors,
+              rate: ((q2Errors / batchExperimentResults.value.length) * 100).toFixed(1) + '%'
+            },
+            'Q_3(v)': {
+              count: q3Errors,
+              rate: ((q3Errors / batchExperimentResults.value.length) * 100).toFixed(1) + '%'
+            }
+          }
+        },
+        config: {
+          nodeCount: primarySelectionConfig.nodeCount,
+          faultyNodes: primarySelectionConfig.faultyNodes,
+          topology: primarySelectionConfig.topology
+        },
+        mismatchedRoundsData: sortedMismatched.map(batch => ({
+          round: batch.round,
+          wrongMetrics: batch.wrongMetrics,
+          wrongCount: batch.wrongCount,
+          gainLossInfo: {
+            iv: {
+              isCorrect: batch.gainLoss.Gain_Gap_Ratio < 0.001,
+              Gain_Gap_Ratio: batch.gainLoss.Gain_Gap_Ratio.toFixed(3) + '%',
+              selectedNode: batch.gainLoss.ivSelectsNode,
+              selectedRate: batch.gainLoss.P_best_Iv.toFixed(2) + '%',
+              gain: batch.gainLoss.Gain_Iv.toFixed(2) + '%',
+              gainGap: batch.gainLoss.Gain_Gap_Iv.toFixed(2) + '%'
+            },
+            qv: {
+              isCorrect: batch.gainLoss.Gain_Gap_Ratio_Qv < 0.001,
+              Gain_Gap_Ratio: batch.gainLoss.Gain_Gap_Ratio_Qv.toFixed(3) + '%',
+              selectedNode: batch.gainLoss.qvSelectsNode,
+              selectedRate: batch.gainLoss.P_best_Qv.toFixed(2) + '%',
+              gain: batch.gainLoss.Gain_Qv.toFixed(2) + '%',
+              gainGap: batch.gainLoss.Gain_Gap_Qv.toFixed(2) + '%'
+            },
+            qv1: {
+              isCorrect: batch.gainLoss.Gain_Gap_Ratio_Qv1 < 0.001,
+              Gain_Gap_Ratio: batch.gainLoss.Gain_Gap_Ratio_Qv1.toFixed(3) + '%',
+              selectedNode: batch.gainLoss.qv1SelectsNode,
+              selectedRate: batch.gainLoss.P_best_Qv1.toFixed(2) + '%',
+              gain: batch.gainLoss.Gain_Qv1.toFixed(2) + '%',
+              gainGap: batch.gainLoss.Gain_Gap_Qv1.toFixed(2) + '%',
+              tiebreakerTriggered: batch.gainLoss.qv1TiebreakerTriggered,
+              selectionSameAsQv: batch.gainLoss.qv1SelectionSameAsQv,
+              // 🔍 详细诊断信息
+              diagnosis: batch.gainLoss.qv1Diagnosis ? {
+                top1_node: batch.gainLoss.qv1Diagnosis.top1_node,
+                top2_node: batch.gainLoss.qv1Diagnosis.top2_node,
+                top1_Qv: (batch.gainLoss.qv1Diagnosis.top1_Qv_raw || 0).toFixed(2) + '%',
+                top2_Qv: (batch.gainLoss.qv1Diagnosis.top2_Qv_raw || 0).toFixed(2) + '%',
+                top1_Qv_normalized: batch.gainLoss.qv1Diagnosis.top1_Qv_01?.toFixed(6),
+                top2_Qv_normalized: batch.gainLoss.qv1Diagnosis.top2_Qv_01?.toFixed(6),
+                logit_top1: batch.gainLoss.qv1Diagnosis.logit_top1?.toFixed(6),
+                logit_top2: batch.gainLoss.qv1Diagnosis.logit_top2?.toFixed(6),
+                logit_diff: batch.gainLoss.qv1Diagnosis.logit_diff?.toFixed(6),
+                epsilon_r: batch.gainLoss.qv1Diagnosis.epsilon_r,
+                trigger: batch.gainLoss.qv1Diagnosis.trigger,
+                lambda: batch.gainLoss.qv1Diagnosis.lambda
+              } : null
+            },
+            qw: {
+              isCorrect: batch.gainLoss.Gain_Gap_Ratio_Qw < 0.001,
+              Gain_Gap_Ratio: batch.gainLoss.Gain_Gap_Ratio_Qw.toFixed(3) + '%',
+              selectedNode: batch.gainLoss.qwSelectsNode,
+              selectedRate: batch.gainLoss.P_best_Qw.toFixed(2) + '%',
+              gain: batch.gainLoss.Gain_Qw.toFixed(2) + '%',
+              gainGap: batch.gainLoss.Gain_Gap_Qw.toFixed(2) + '%'
+            },
+            q2: {  // ✅ 新增 Q_2
+              isCorrect: batch.gainLoss.Gain_Gap_Ratio_Q2 < 0.001,
+              Gain_Gap_Ratio: batch.gainLoss.Gain_Gap_Ratio_Q2.toFixed(3) + '%',
+              selectedNode: batch.gainLoss.q2SelectsNode,
+              selectedRate: batch.gainLoss.P_best_Q2.toFixed(2) + '%',
+              gain: batch.gainLoss.Gain_Q2.toFixed(2) + '%',
+              gainGap: batch.gainLoss.Gain_Gap_Q2.toFixed(2) + '%'
+            },
+            q3: {  // ✅ 新增 Q_3
+              isCorrect: batch.gainLoss.Gain_Gap_Ratio_Q3 < 0.001,
+              Gain_Gap_Ratio: batch.gainLoss.Gain_Gap_Ratio_Q3.toFixed(3) + '%',
+              selectedNode: batch.gainLoss.q3SelectsNode,
+              selectedRate: batch.gainLoss.P_best_Q3.toFixed(2) + '%',
+              gain: batch.gainLoss.Gain_Q3.toFixed(2) + '%',
+              gainGap: batch.gainLoss.Gain_Gap_Q3.toFixed(2) + '%'
+            },
+            theoreticalBestNode: batch.gainLoss.optimalNode,
+            theoreticalBestRate: batch.gainLoss.P_best_Theory.toFixed(2) + '%',
+            averageRate: batch.gainLoss.P_avg.toFixed(2) + '%',
+            theoreticalGain: batch.gainLoss.Gain_Theory.toFixed(2) + '%'
+          },
+          reliabilityMatrix: batch.reliabilityMatrix,
+          allNodes: batch.results.map((r, idx) => {
+            const diag = batch.gainLoss.qv1Diagnosis
+            const isTop1 = diag && idx === diag.top1_node
+            const isTop2 = diag && idx === diag.top2_node
+            
+            return {
+              nodeId: r.proposerId,
+              theoreticalSuccessRate: r.theoreticalSuccessRate.toFixed(2) + '%',
+              I_v: r.metrics?.I_v?.toFixed(2) + '%' || 'N/A',
+              Q_v: r.metrics?.Q_pp?.toFixed(2) + '%' || 'N/A',
+              Q_v1: r.metrics?.Q_v1?.toFixed(2) + '%' || 'N/A',
+              Q_w: r.metrics?.Q_w?.toFixed(2) + '%' || 'N/A',
+              Q_2: r.metrics?.Q_2?.toFixed(2) + '%' || 'N/A',
+              Q_3: r.metrics?.Q_3?.toFixed(2) + '%' || 'N/A',
+              // 🔍 Q_v1 诊断信息（仅对 Top2 节点显示）
+              qv1_diag: (isTop1 || isTop2) ? {
+                isTop1: isTop1,
+                isTop2: isTop2,
+                Qv_raw: r.metrics?.Q_pp?.toFixed(2) + '%',
+                Qw_raw: r.metrics?.Q_w?.toFixed(2) + '%',
+                logit_value: isTop1 ? diag.logit_top1?.toFixed(6) : (isTop2 ? diag.logit_top2?.toFixed(6) : null)
+              } : null,
+              isTheoryBest: idx === batch.gainLoss.optimalNode,
+              isIvSelected: idx === batch.gainLoss.ivSelectsNode,
+              isQvSelected: idx === batch.gainLoss.qvSelectsNode,
+              isQv1Selected: idx === batch.gainLoss.qv1SelectsNode,
+              isQwSelected: idx === batch.gainLoss.qwSelectsNode,
+              isQ2Selected: idx === batch.gainLoss.q2SelectsNode,
+              isQ3Selected: idx === batch.gainLoss.q3SelectsNode
+            }
+          })
+        }))
+      }
+      
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `mismatched-rounds-${Date.now()}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      
+      ElMessage.success(`Exported ${totalMismatched} mismatched rounds successfully!`)
+      console.log(`\n=== 导出不匹配轮次 ===`)
+      console.log(`  - 总轮次: ${batchExperimentResults.value.length}`)
+      console.log(`  - 两者都对: ${bothPerfect.length}`)
+      console.log(`  - 不匹配总数: ${totalMismatched}`)
+      console.log(`    • 两者都错: ${bothMismatched.length}`)
+      console.log(`    • 仅I(v)错: ${ivMismatchedOnly.length}`)
+      console.log(`    • 仅Q(v)错: ${qvMismatchedOnly.length}`)
+      console.log(`  - 总不匹配率: ${((totalMismatched / batchExperimentResults.value.length) * 100).toFixed(1)}%`)
     }
     
     // 清除历史数据
@@ -2443,6 +4290,7 @@ export default {
       // 演示相关
       demoDialogVisible,
       showMatrixEditor,
+      showPrimaryMatrixEditor,  // ✅ Primary Selection 页面的矩阵编辑器
       simulating,
       simulationRounds,
       currentRound,
@@ -2457,6 +4305,7 @@ export default {
       currentExperimentRound,
       experimentResults,
       experimentConfig,
+      primarySelectionConfig,  // ✅ Primary Selection 页面的独立配置
       successCount,
       failureCount,
       successRate,
@@ -2468,9 +4317,13 @@ export default {
       showChartDialog,
       VideoPlay,
       Histogram,
+      Refresh,
       onReliabilityMatrixUpdate,
       onProposerIdUpdate,
       onRandomRangeUpdate,
+      onPrimaryReliabilityMatrixUpdate,  // ✅ Primary Selection 页面的矩阵更新处理
+      onPrimaryProposerIdUpdate,  // ✅ Primary Selection 页面的主节点更新处理
+      onPrimaryRandomRangeUpdate,  // ✅ Primary Selection 页面的随机范围更新处理
       // All Proposers Experiment
       allProposersRunning,
       currentProposerIndex,
@@ -2478,6 +4331,16 @@ export default {
       allProposersChartContainer,
       runAllProposersExperiment,
       exportAllProposersResults,
+      exportBatchExperimentResults,
+      exportMismatchedRounds,
+      // Batch Random Experiments
+      batchExperimentRunning,
+      batchExperimentRounds,
+      currentBatchRound,
+      batchExperimentResults,
+      gainLossStatsDisplay,
+      gainLossStatsHTML,
+      runBatchRandomExperiments,
       // 历史数据和相关性分析
       historicalData,
       correlationResults,
@@ -2564,7 +4427,7 @@ export default {
 .radio-container {
   --main-color: #f7e479;
   --main-color-opacity: #f7e4791c;
-  --total-radio: 2;
+  --total-radio: 3;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -2656,6 +4519,10 @@ export default {
 
 .radio-container input:nth-of-type(2):checked ~ .glider-container .glider {
   transform: translateY(100%);
+}
+
+.radio-container input:nth-of-type(3):checked ~ .glider-container .glider {
+  transform: translateY(200%);
 }
 
 .config-card, .qr-card, .welcome-card {
@@ -3072,6 +4939,45 @@ export default {
 
 .stat-value.primary {
   color: #409eff;
+}
+
+.stat-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  padding: 20px;
+  color: white;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.stat-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 15px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+  padding-bottom: 10px;
+}
+
+.stat-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.metric-row:last-child {
+  border-bottom: none;
+}
+
+.metric-row span:first-child {
+  font-size: 14px;
+  opacity: 0.9;
 }
 
 .results-list {
