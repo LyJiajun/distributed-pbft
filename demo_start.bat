@@ -17,7 +17,13 @@ if not exist "dist" (
 )
 
 echo 安装 Python 依赖...
-pip install -r backend\requirements.txt -q
+pip install --user -r backend\requirements.txt -q
+
+echo 检查端口 8000...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000 "') do (
+    echo 释放端口 8000 (PID %%a)...
+    taskkill /PID %%a /F >nul 2>&1
+)
 
 echo.
 echo 启动服务，访问地址: http://localhost:8000
