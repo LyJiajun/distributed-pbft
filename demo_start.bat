@@ -19,17 +19,8 @@ if not exist "dist" (
 echo 安装 Python 依赖...
 pip install --user -r backend\requirements.txt -q
 
-echo 检查端口 8000...
-netstat -ano | findstr ":8000" > "%TEMP%\pbft_port.txt"
-for /f "usebackq tokens=5" %%a in ("%TEMP%\pbft_port.txt") do (
-    echo 关闭占用端口的进程 PID %%a
-    taskkill /F /PID %%a
-)
-del "%TEMP%\pbft_port.txt" >nul 2>&1
-timeout /t 2 /nobreak >nul
-
 echo.
-echo 启动服务，访问地址: http://localhost:8000
+echo 启动服务，访问地址: http://localhost:8080
 echo 按 Ctrl+C 停止
 echo.
 

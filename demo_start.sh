@@ -25,8 +25,8 @@ pip3 install -r "$BACKEND_DIR/requirements.txt" -q
 
 # 启动
 echo "启动服务..."
-echo "访问地址: http://localhost:8000"
-echo "局域网地址: http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'your-ip'):8000"
+echo "访问地址: http://localhost:8080"
+echo "局域网地址: http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'your-ip'):8080"
 echo "按 Ctrl+C 停止"
 echo ""
 
