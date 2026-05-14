@@ -20,7 +20,10 @@ echo 安装 Python 依赖...
 pip install --user -r backend\requirements.txt -q
 
 echo 检查端口 8000...
-powershell -Command "Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+netstat -ano 2>nul | findstr ":8000 " > "%TEMP%\pbft_port.txt" 2>nul
+for /f "usebackq tokens=5" %%a in ("%TEMP%\pbft_port.txt") do taskkill /F /PID %%a >nul 2>&1
+del "%TEMP%\pbft_port.txt" >nul 2>&1
+timeout /t 2 /nobreak >nul
 
 echo.
 echo 启动服务，访问地址: http://localhost:8000
