@@ -3,8 +3,8 @@
     <canvas ref="canvas" width="600" height="600"></canvas>
     <!-- 最终共识结果显示区域 -->
     <div class="consensus-result" v-if="finalConsensus">
-      <h3>最终共识结果</h3>
-      <p>{{ finalConsensus }}</p>
+      <h3>Final Consensus Result</h3>
+      <p :style="{ color: finalConsensus.includes('Succeeded') ? '#22c55e' : '#ef4444', fontWeight: 'bold' }">{{ finalConsensus }}</p>
     </div>
   </div>
 </template>
@@ -102,19 +102,28 @@ export default {
     // 单个阶段内所有消息动画同时播放的处理函数
     const animatePhase = (messages, doneCallback) => {
       // 根据animationSpeed计算步数：速度越快，步数越少
-      // 基础步数100，除以速度系数（默认速度1x对应100步）
       const speed = props.animationSpeed || 1;
-      const steps = Math.round(100 / speed);
-      
+      const stepsPerHop = Math.round(80 / speed); // 每一跳的步数（75%速度）
+
       const animations = messages
         .filter((msg) => msg.dst !== null)
         .map((msg) => {
+          // 构建路径上的坐标点序列
+          const path = msg.path || [msg.src, msg.dst];
+          const waypoints = path.map(nodeId => nodePositions.value[nodeId]);
+          // 每个小球速度略有不同，避免完全重叠
+          const speedVariation = 0.85 + Math.random() * 0.25; // 0.85 ~ 1.10
+          const actualStepsPerHop = Math.round(stepsPerHop * speedVariation);
+          // 随机延迟几帧出发，进一步错开
+          const delay = Math.floor(Math.random() * Math.round(stepsPerHop * 0.3));
+          const totalSteps = actualStepsPerHop * (waypoints.length - 1) + delay;
           return {
             msg,
-            start: nodePositions.value[msg.src],
-            end: nodePositions.value[msg.dst],
+            waypoints,
             frame: 0,
-            steps: steps // 根据速度动态计算动画步数
+            totalSteps,
+            stepsPerHop: actualStepsPerHop,
+            delay
           };
         });
 
@@ -122,16 +131,29 @@ export default {
         ctx.value.clearRect(0, 0, 600, 600);
         drawTopology();
         let stillAnimating = false;
+        const expectedValue = props.proposalValue ?? props.simulationResult?.proposalValue ?? 0;
+
         animations.forEach((anim) => {
-          if (anim.frame < anim.steps) {
+          if (anim.frame < anim.totalSteps) {
             stillAnimating = true;
-            const progress = anim.frame / anim.steps;
-            const x = anim.start.x + (anim.end.x - anim.start.x) * progress;
-            const y = anim.start.y + (anim.end.y - anim.start.y) * progress;
-            // 根据消息的 value 决定移动圆点的颜色：
-            // 与proposalValue相同时使用绿色（正确），不同时使用红色（拜占庭攻击）
-            const expectedValue = props.proposalValue ?? props.simulationResult?.proposalValue ?? 0;
-            const dotColor = (anim.msg.value === expectedValue || 
+            // 延迟期间不绘制
+            const effectiveFrame = anim.frame - anim.delay;
+            if (effectiveFrame < 0) {
+              anim.frame++;
+              return;
+            }
+            // 计算当前在路径的哪一段
+            const segIndex = Math.min(
+              Math.floor(effectiveFrame / anim.stepsPerHop),
+              anim.waypoints.length - 2
+            );
+            const segProgress = (effectiveFrame - segIndex * anim.stepsPerHop) / anim.stepsPerHop;
+            const from = anim.waypoints[segIndex];
+            const to = anim.waypoints[segIndex + 1];
+            const x = from.x + (to.x - from.x) * segProgress;
+            const y = from.y + (to.y - from.y) * segProgress;
+
+            const dotColor = (anim.msg.value === expectedValue ||
                             anim.msg.value === expectedValue.toString())
                 ? "green"
                 : "red";
@@ -163,7 +185,7 @@ export default {
         animatePhase(prepareMessages, () => {
           animatePhase(commitMessages, () => {
             finalConsensus.value =
-              simulationResult.consensus || "共识结果已达成";
+              simulationResult.consensus || "Consensus reached";
           });
         });
       });

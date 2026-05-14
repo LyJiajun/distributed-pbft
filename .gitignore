@@ -43,7 +43,6 @@ logs/
 .cache/
 
 # 构建输出
-dist/
 build/
 *.tar.gz
 

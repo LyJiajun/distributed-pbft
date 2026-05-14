@@ -4,20 +4,20 @@
       <el-main class="main-content">
         <!-- Session Info Card Row -->
         <el-row :gutter="20" style="margin-bottom: 20px;">
-          <el-col :span="6">
+          <el-col :xs="24" :sm="12" :md="6">
             <div class="session-info-card">
               <div class="info-section">
-                <h2>参与者 {{ nodeId }}</h2>
+                <h2>Participant {{ nodeId }}</h2>
                 <div class="tags-group">
                   <el-tag :type="connectionStatus === 'connected' ? 'success' : 'danger'" size="small">
                     {{ connectionStatus === 'connected' ? 'Connected' : 'Disconnected' }}
                   </el-tag>
-                  <el-tag type="danger" effect="dark" size="small">🦹 拜占庭节点（人类玩家）</el-tag>
+                  <el-tag type="danger" effect="dark" size="small">🦹 Byzantine Node (Human Player)</el-tag>
                 </div>
               </div>
               <div class="info-section">
                 <div class="session-details">
-                  <span class="session-id">会话: {{ sessionId }}</span>
+                  <span class="session-id">Session: {{ sessionId }}</span>
                 </div>
                 <el-button 
                   size="small" 
@@ -25,7 +25,7 @@
                   type="danger" 
                   style="width: 100%; margin-top: 8px; background-color: #ef4444 !important; border-color: #ef4444 !important; color: white !important;"
                 >
-                  离开会话
+                  Leave Session
                 </el-button>
               </div>
             </div>
@@ -34,7 +34,7 @@
         
         <el-row :gutter="20">
           <!-- Left: Consensus Progress -->
-          <el-col :span="6">
+          <el-col :xs="24" :sm="12" :md="6">
             <!-- Advanced Options Toggle -->
             <div style="margin-bottom: 15px;">
               <button
@@ -49,7 +49,7 @@
               <template #header>
                 <div class="card-header">
                   <span>Consensus Progress</span>
-                  <el-tag type="primary" size="large" effect="dark">第 {{ currentRound }} 轮</el-tag>
+                  <el-tag type="primary" size="large" effect="dark">Round {{ currentRound }}</el-tag>
                 </div>
               </template>
               
@@ -120,7 +120,7 @@
                           ></path>
                         </svg>
                         <span class="text-sm font-semibold flex-1 text-left">
-                          {{ hasChosenAction && isNormalMode ? '✓ 已选择正常共识（机器人代理）' : 'Normal Consensus' }}
+                          {{ hasChosenAction && isNormalMode ? '✓ Normal Consensus Selected (Robot Proxy)' : 'Normal Consensus' }}
                         </span>
                       </button>
                       
@@ -145,7 +145,7 @@
                           ></path>
                         </svg>
                         <span class="text-sm font-semibold flex-1 text-left">
-                          {{ hasChosenAction && !isNormalMode ? '✓ 已选择拜占庭攻击' : 'Byzantine Attack' }}
+                          {{ hasChosenAction && !isNormalMode ? '✓ Byzantine Attack Selected' : 'Byzantine Attack' }}
                         </span>
                       </button>
                     </div>
@@ -180,7 +180,7 @@
                 <!-- Byzantine Attack Control Area (only show when Byzantine mode chosen) -->
                 <div class="attack-control" v-if="hasChosenAction && !isNormalMode">
                   <el-divider content-position="left">
-                    <span style="color: #f56c6c; font-weight: bold;">🦹 拜占庭攻击操作</span>
+                    <span style="color: #f56c6c; font-weight: bold;">🦹 Byzantine Attack Actions</span>
                   </el-divider>
                   
                   <div class="simple-attack-control space-y-3">
@@ -225,13 +225,13 @@
                           stroke-linecap="round"
                         ></path>
                       </svg>
-                      <span class="text-sm font-semibold">🎲 发送差异化消息（随机）</span>
+                      <span class="text-sm font-semibold">🎲 Send Differential Message (Random)</span>
                     </button>
                   </div>
                   
-                  <!-- 消息可靠性控制 -->
+                  <!-- Message Reliability Control -->
                   <el-divider content-position="left" style="margin-top: 20px;">
-                    <span style="color: #409eff; font-weight: bold;">📡 消息可靠性控制</span>
+                    <span style="color: #409eff; font-weight: bold;">📡 Message Reliability Control</span>
                   </el-divider>
                   
                   <div class="reliability-control">
@@ -351,7 +351,7 @@
           </el-col>
           
           <!-- Middle: Received Messages -->
-          <el-col :span="6" v-if="showAdvancedOptions">
+          <el-col :xs="24" :sm="12" :md="6" v-if="showAdvancedOptions">
             <el-card class="messages-card">
               <template #header>
                 <div class="card-header">
@@ -375,7 +375,7 @@
                     class="message-item-compact"
                   >
                     <div class="message-header-compact">
-                      <span class="message-from">来自: 参与者{{ msg.from }}</span>
+                      <span class="message-from">From: Participant {{ msg.from }}</span>
                       <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
                     </div>
                     <div class="message-content-compact">
@@ -395,7 +395,7 @@
           </el-col>
           
           <!-- Right: Topology and Consensus Results -->
-          <el-col :span="12" v-if="showAdvancedOptions">
+          <el-col :xs="24" :sm="24" :md="12" v-if="showAdvancedOptions">
             <!-- Topology -->
             <el-card class="topology-card">
               <template #header>
@@ -408,23 +408,47 @@
               <div class="dynamic-topology">
                 <div class="topology-info">
                   <p><strong>Network Type:</strong> {{ getTopologyName(sessionConfig.topology) }}</p>
-                  <p><strong>总参与者:</strong> {{ sessionConfig.nodeCount }}</p>
+                  <p><strong>Total Participants:</strong> {{ sessionConfig.nodeCount }}</p>
                   <p><strong>活跃连接:</strong> {{ getActiveConnections() }}</p>
                 </div>
                 
                 <!-- Topology Container -->
                 <div class="topology-container">
-                  <!-- Connection Lines -->
+                  <!-- Connection Lines + Message Animations -->
                   <svg class="connection-lines" :width="topologyWidth" :height="topologyHeight">
-                    <line 
-                      v-for="connection in topologyConnections" 
+                    <line
+                      v-for="connection in topologyConnections"
                       :key="`${connection.from}-${connection.to}`"
-                      :x1="connection.x1" 
-                      :y1="connection.y1" 
-                      :x2="connection.x2" 
+                      :x1="connection.x1"
+                      :y1="connection.y1"
+                      :x2="connection.x2"
                       :y2="connection.y2"
                       :class="connection.active ? 'active-connection' : 'inactive-connection'"
                     />
+                    <!-- Flying message dots -->
+                    <circle
+                      v-for="anim in messageAnimations"
+                      :key="anim.id"
+                      r="7"
+                      :fill="anim.color"
+                      opacity="0.9"
+                    >
+                      <animate
+                        attributeName="cx"
+                        :from="anim.x1" :to="anim.x2"
+                        dur="0.8s" fill="freeze"
+                      />
+                      <animate
+                        attributeName="cy"
+                        :from="anim.y1" :to="anim.y2"
+                        dur="0.8s" fill="freeze"
+                      />
+                      <animate
+                        attributeName="opacity"
+                        from="0.9" to="0"
+                        begin="0.6s" dur="0.2s" fill="freeze"
+                      />
+                    </circle>
                   </svg>
                   
                   <!-- Nodes -->
@@ -546,6 +570,21 @@ const showDifferentialMatrix = ref(false)
 const topologyWidth = ref(500)
 const topologyHeight = ref(400)
 const topologyConnections = ref([])
+const messageAnimations = ref([])  // flying dot animations
+
+const triggerMessageAnimation = (fromNode, toNode, isCorrect) => {
+  const nodeSize = 40
+  const x1 = getNodeX(fromNode) + nodeSize / 2
+  const y1 = getNodeY(fromNode) + nodeSize / 2
+  const x2 = getNodeX(toNode) + nodeSize / 2
+  const y2 = getNodeY(toNode) + nodeSize / 2
+  const id = Date.now() + Math.random()
+  messageAnimations.value.push({ id, x1, y1, x2, y2, color: isCorrect ? '#67c23a' : '#f56c6c' })
+  // remove after animation completes
+  setTimeout(() => {
+    messageAnimations.value = messageAnimations.value.filter(a => a.id !== id)
+  }, 900)
+}
 
 
 // Message sending form (custom message functionality removed)
@@ -634,7 +673,7 @@ const connectToServer = () => {
     isNormalMode.value = false
     waitingForNextRound.value = false  // 可以参与共识了
     
-    ElMessage.info(`开始第${data.round}轮共识`)
+    ElMessage.info(`Round ${data.round} consensus started`)
   })
 
   socket.value.on('message_received', (message) => {
@@ -643,12 +682,20 @@ const connectToServer = () => {
       id: Date.now() + Math.random(),
       timestamp: new Date()
     })
-    
+
     // If it's a pre-prepare message, set the accepted value
     if (message.type === 'pre_prepare' && message.from === 0) {
       acceptedValue.value = message.value
     }
-    
+
+    // Animate the message as a flying dot (green = correct, red = byzantine)
+    const fromNode = message.from
+    const toNode = message.to ?? nodeId
+    if (fromNode !== undefined && fromNode !== toNode) {
+      const isCorrect = message.value === (acceptedValue.value ?? message.value)
+      triggerMessageAnimation(fromNode, toNode, isCorrect && !message.byzantine)
+    }
+
     refreshTopology()
   })
 
@@ -1399,6 +1446,25 @@ onUnmounted(() => {
   margin-top: 15px;
 }
 
+.phase-steps :deep(.el-step__title) {
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.phase-steps :deep(.el-steps--simple) {
+  padding: 8px 4px;
+}
+
+@media (max-width: 768px) {
+  .phase-steps :deep(.el-step__title) {
+    font-size: 11px;
+  }
+  .phase-steps :deep(.el-steps--simple) {
+    padding: 6px 2px;
+    gap: 2px;
+  }
+}
+
 .current-status {
   margin-bottom: 20px;
 }
@@ -1925,16 +1991,46 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
+  .node-page {
+    font-size: 14px;
+  }
+
   .main-content {
-    padding: 10px;
+    padding: 8px;
   }
-  
+
   .session-info-card {
-    padding: 15px;
+    padding: 12px;
   }
-  
+
   .info-section h2 {
-    font-size: 1.2rem;
+    font-size: 1.1rem;
+  }
+
+  .session-id {
+    font-size: 11px;
+    word-break: break-all;
+  }
+
+  .tags-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .card-header {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .el-card {
+    margin-bottom: 12px;
+  }
+
+  .operation-buttons button,
+  .operation-buttons .el-button {
+    width: 100%;
+    margin-bottom: 8px;
   }
 }
 </style> 

@@ -221,7 +221,7 @@
                   <el-descriptions-item label="Proposal Value">{{ sessionInfo.config.proposalValue }}</el-descriptions-item>
                   <el-descriptions-item label="Proposal Content">{{ sessionInfo.config.proposalContent || 'None' }}</el-descriptions-item>
                   <el-descriptions-item label="Message Delivery Rate">{{ sessionInfo.config.messageDeliveryRate }}%</el-descriptions-item>
-                  <el-descriptions-item label="状态">{{ sessionInfo.status }}</el-descriptions-item>
+                  <el-descriptions-item label="Status">{{ sessionInfo.status }}</el-descriptions-item>
                 </el-descriptions>
                 
                 <div class="qr-section">
@@ -455,7 +455,7 @@
                             :class="result.success ? 'success' : 'failure'"
                           >
                             <div class="result-header">
-                              <span class="round-label">第 {{ result.round }} 轮</span>
+                              <span class="round-label">Round {{ result.round }}</span>
                               <el-tag :type="result.success ? 'success' : 'danger'" size="small">
                                 {{ result.success ? 'Success' : 'Failure' }}
                               </el-tag>
@@ -858,7 +858,7 @@
                       :key="round.id" 
                       :label="round.id"
                     >
-                      第 {{ round.id }} 轮
+                      Round {{ round.id }}
                     </el-radio-button>
                   </el-radio-group>
                 </div>
@@ -1148,19 +1148,14 @@ export default {
         // Clear container
         qrContainer.value.innerHTML = ''
         
-        const qrData = {
-          sessionId: sessionInfo.value.sessionId,
-          nodeCount: sessionInfo.value.config.nodeCount,
-          joinUrl: `${window.location.origin}/join/${sessionInfo.value.sessionId}`,
-          autoAssign: true,
-          description: 'Scan QR code to auto-assign node'
-        }
-        
-        console.log('Generate QR code data:', qrData)
-        
+        // 直接编码 URL，手机扫码即可打开浏览器
+        const joinUrl = `${window.location.origin}/join/${sessionInfo.value.sessionId}`
+
+        console.log('Generate QR code URL:', joinUrl)
+
         // Method 1: Direct use of container
         try {
-          await QRCode.toCanvas(qrContainer.value, JSON.stringify(qrData), {
+          await QRCode.toCanvas(qrContainer.value, joinUrl, {
             width: 200,
             margin: 2,
             color: {
@@ -1179,7 +1174,7 @@ export default {
           const canvas = document.createElement('canvas')
           qrContainer.value.appendChild(canvas)
           
-          await QRCode.toCanvas(canvas, JSON.stringify(qrData), {
+          await QRCode.toCanvas(canvas, joinUrl, {
             width: 200,
             margin: 2,
             color: {
@@ -1195,7 +1190,7 @@ export default {
         
         // Method 3: Use toDataURL
         try {
-          const dataURL = await QRCode.toDataURL(JSON.stringify(qrData), {
+          const dataURL = await QRCode.toDataURL(joinUrl, {
             width: 200,
             margin: 2,
             color: {
@@ -1236,10 +1231,21 @@ export default {
     
     const copyLink = async (url) => {
       try {
-        await navigator.clipboard.writeText(url)
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(url)
+        } else {
+          const textarea = document.createElement('textarea')
+          textarea.value = url
+          textarea.style.position = 'fixed'
+          textarea.style.left = '-9999px'
+          document.body.appendChild(textarea)
+          textarea.select()
+          document.execCommand('copy')
+          document.body.removeChild(textarea)
+        }
         ElMessage.success('Link copied to clipboard')
       } catch (error) {
-        ElMessage.error('Failed to copy')
+        ElMessage.error('Failed to copy: ' + url)
       }
     }
     
@@ -1557,7 +1563,7 @@ export default {
         tooltip: {
           trigger: 'axis',
           formatter: (params) => {
-            let result = `第${params[0].value[0]}轮<br/>`
+            let result = `Round ${params[0].value[0]}<br/>`
             params.forEach(param => {
               result += `${param.seriesName}: ${param.value[1].toFixed(2)}%<br/>`
             })
@@ -3333,7 +3339,7 @@ export default {
               formatter: function(params) {
                 const isIvSelected = params.dataIndex === maxIvIndex
                 const val = params.value
-                return isIvSelected ? `${val}%\n(I(v)选中)` : `${val}%`
+                return isIvSelected ? `${val}%\n(I(v) selected)` : `${val}%`
               },
               fontSize: 11,
               color: '#000',

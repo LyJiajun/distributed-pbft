@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import socketio
@@ -10,6 +12,7 @@ from datetime import datetime
 import json
 import networkx as nx  # 用于介数中心性计算
 from scipy.stats import norm  # 用于正态分布计算
+import os
 
 # 创建FastAPI应用
 app = FastAPI(title="分布式PBFT共识系统", version="1.0.0")
@@ -107,6 +110,7 @@ def create_session(config: SessionConfig) -> SessionInfo:
         "human_nodes": [],  # 人类节点列表（拜占庭节点）
         "robot_node_states": {},  # 机器人节点的状态（记录收到的消息）
         "timeout_task": None,  # 超时任务
+        "phase_timeout_task": None,  # 阶段超时任务
         "messages": {
             "pre_prepare": [],
             "prepare": [],
@@ -959,7 +963,7 @@ def calculate_theoretical_success_rate(n: int, f: int, p: float) -> float:
 
     # 口径A：最终成功要求 N_c >= N - f
     nc_required = n - f
-    # 论文式(6)中使用的“至少收到2f条成功消息”（来自其他节点）
+    # 论文式(6)中使用的"至少收到2f条成功消息"（来自其他节点）
     k_prepare = 2 * f - 1   # prepare阶段：从其他节点收到2f-1条（加自己=2f）
     k_commit = 2 * f        # commit阶段：从其他节点收到2f条（加自己=2f+1）
 
@@ -1677,7 +1681,21 @@ async def get_session_info(session_id: str):
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
-    return session
+    return {
+        "sessionId": session_id,
+        "config": {
+            "nodeCount": session["config"]["nodeCount"],
+            "faultyNodes": session["config"]["faultyNodes"],
+            "robotNodes": session["config"]["robotNodes"],
+            "topology": session["config"]["topology"],
+            "proposalValue": session["config"]["proposalValue"],
+            "proposalContent": session["config"].get("proposalContent", ""),
+            "messageDeliveryRate": session["config"].get("messageDeliveryRate", 100),
+        },
+        "status": session.get("status", "waiting"),
+        "phase": session.get("phase", "idle"),
+        "round": session.get("round", 0),
+    }
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
@@ -1949,7 +1967,7 @@ async def run_batch_experiment(session_id: str, request: BatchExperimentRequest)
     # 存储所有轮次的结果
     all_results = []
 
-    # 批量实验必须严格“等一轮结束再进入下一轮”，否则会出现异步任务跨轮写入（round字段错乱）
+    # 批量实验必须严格"等一轮结束再进入下一轮"，否则会出现异步任务跨轮写入（round字段错乱）
     # 这里复用现有的 reset_round 逻辑，确保每轮初始化、触发、超时机制一致。
     session["current_round"] = 0
     session["consensus_finalized_round"] = None
@@ -2006,15 +2024,15 @@ async def run_batch_experiment(session_id: str, request: BatchExperimentRequest)
         if round_history:
             status_text = round_history.get("status", "")
             description = round_history.get("description", "")
-            success = "成功" in status_text and "失败" not in status_text
-            
+            success = "Succeeded" in status_text or "成功" in status_text
+
             if not success:
-                if "超时" in status_text:
-                    failure_reason = "超时"
+                if "Timeout" in status_text or "超时" in status_text:
+                    failure_reason = "Timeout"
                 elif description:
                     failure_reason = description
                 else:
-                    failure_reason = status_text or "失败"
+                    failure_reason = status_text or "Failed"
         else:
             failure_reason = "超时" if waited_time >= max_wait else "未知"
         
@@ -2153,13 +2171,23 @@ async def get_session_history(session_id: str, round: Optional[int] = None):
     print(f"第 {round} 轮消息数量: pre_prepare={len(round_pre_prepare)}, "
           f"prepare={len(round_prepare)}, commit={len(round_commit)}")
     
+    # 获取最短路径用于动画
+    shortest_paths = session.get("shortest_paths", {})
+
+    def get_path(src, dst):
+        """获取src到dst的最短路径节点列表"""
+        key = (src, dst)
+        if key in shortest_paths:
+            return shortest_paths[key]
+        # full拓扑直连
+        return [src, dst]
+
     # 转换消息格式以适配动画组件
     # Pre-prepare消息 - 展开广播为点对点消息
     pre_prepare_messages = []
     for msg in round_pre_prepare:
         src = msg["from"]
         value = msg.get("value", config["proposalValue"])
-        # 如果是广播消息，展开为多个点对点消息
         if msg.get("to") == "all":
             for dst in range(n):
                 if dst != src and is_connection_allowed(src, dst, n, topology, n_value):
@@ -2167,22 +2195,24 @@ async def get_session_history(session_id: str, round: Optional[int] = None):
                         "src": src,
                         "dst": dst,
                         "value": value,
-                        "type": "pre_prepare"
+                        "type": "pre_prepare",
+                        "path": get_path(src, dst)
                     })
         else:
+            dst = msg.get("to", None)
             pre_prepare_messages.append({
                 "src": src,
-                "dst": msg.get("to", None),
+                "dst": dst,
                 "value": value,
-                "type": "pre_prepare"
+                "type": "pre_prepare",
+                "path": get_path(src, dst) if dst is not None else [src]
             })
-    
+
     # Prepare消息 - 展开广播为点对点消息
     prepare_messages = []
     for msg in round_prepare:
         src = msg["from"]
         value = msg.get("value", config["proposalValue"])
-        # 如果是广播消息，展开为多个点对点消息
         if msg.get("to") == "all":
             for dst in range(n):
                 if dst != src and is_connection_allowed(src, dst, n, topology, n_value):
@@ -2190,16 +2220,19 @@ async def get_session_history(session_id: str, round: Optional[int] = None):
                         "src": src,
                         "dst": dst,
                         "value": value,
-                        "type": "prepare"
+                        "type": "prepare",
+                        "path": get_path(src, dst)
                     })
         else:
+            dst = msg.get("to", None)
             prepare_messages.append({
                 "src": src,
-                "dst": msg.get("to", None),
+                "dst": dst,
                 "value": value,
-                "type": "prepare"
+                "type": "prepare",
+                "path": get_path(src, dst) if dst is not None else [src]
             })
-    
+
     # Commit消息 - 展开广播为点对点消息
     commit_messages = []
     for msg in round_commit:
@@ -2213,14 +2246,17 @@ async def get_session_history(session_id: str, round: Optional[int] = None):
                         "src": src,
                         "dst": dst,
                         "value": value,
-                        "type": "commit"
+                        "type": "commit",
+                        "path": get_path(src, dst)
                     })
         else:
+            dst = msg.get("to", None)
             commit_messages.append({
                 "src": src,
-                "dst": msg.get("to", None),
+                "dst": dst,
                 "value": value,
-                "type": "commit"
+                "type": "commit",
+                "path": get_path(src, dst) if dst is not None else [src]
             })
     
     # 获取该轮的共识结果
@@ -2290,20 +2326,29 @@ async def connect(sid, environ, auth):
         })
         await sio.emit('session_config', config, room=sid)
         
-        # 人类节点进入时，不参加当前轮次的共识
-        # 只发送会话配置，不发送当前轮次信息和历史消息
-        print(f"人类节点 {node_id} 进入，等待下一轮共识开始")
-        
         # 将节点加入会话房间
         await sio.enter_room(sid, session_id)
-        
+
         # 广播连接状态
         await sio.emit('connected_nodes', connected_nodes[session_id], room=session_id)
-        
-        print(f"节点 {node_id} 加入会话 {session_id}")
-        
-        # 检查是否可以开始共识
-        await check_and_start_consensus(session_id)
+
+        # 同步当前共识状态给人类节点（共识由 create_robot_nodes_and_start 自动启动）
+        current_phase = session.get("phase", "waiting")
+        current_round = session.get("current_round", 1)
+        print(f"人类节点 {node_id} 加入会话 {session_id}，同步当前状态: round={current_round}, phase={current_phase}")
+
+        await sio.emit('phase_update', {
+            "phase": current_phase,
+            "step": session.get("phase_step", 0),
+            "isMyTurn": False
+        }, room=sid)
+
+        if current_round > 1:
+            await sio.emit('new_round', {
+                "round": current_round,
+                "phase": current_phase,
+                "step": session.get("phase_step", 0)
+            }, room=sid)
 
 @sio.event
 async def disconnect(sid):
@@ -2369,20 +2414,31 @@ async def send_prepare(sid, data):
                 "byzantine": data.get("byzantine", False),
                 "delivered": True  # 标记消息已实际发送
             }
-            
+
             # 记录消息（只记录实际发送的消息）
             session["messages"]["prepare"].append(message)
-            
-            # 获取目标节点的socket ID并发送
+
+            # 更新机器人目标节点的 received_prepare_count
+            if target_node in session.get("robot_node_states", {}):
+                if session["robot_node_states"][target_node].get("received_pre_prepare"):
+                    session["robot_node_states"][target_node]["received_prepare_count"] += 1
+
+            # 发送给目标节点（如果在线）并广播到整个 session 供动画/统计显示
+            target_sid = None
             if session_id in node_sockets and target_node in node_sockets[session_id]:
                 target_sid = node_sockets[session_id][target_node]
                 await sio.emit('message_received', message, room=target_sid)
                 print(f"✅ 节点 {node_id} 的准备消息已发送给节点 {target_node} (可靠性: {reliability_info})")
             else:
-                print(f"⚠️  节点 {target_node} 未连接，消息未发送")
+                print(f"⚠️  节点 {target_node} 未连接，消息未发送给目标节点")
+            # 广播到整个 session（动画 & 消息表格）
+            if target_sid:
+                await sio.emit('message_received', message, room=session_id, skip_sid=target_sid)
+            else:
+                await sio.emit('message_received', message, room=session_id)
         else:
             print(f"❌ 节点 {node_id} 到节点 {target_node} 的准备消息被丢弃 (可靠性: {reliability_info})")
-    
+
     # 检查准备阶段是否完成
     await check_prepare_phase(session_id)
 
@@ -2391,7 +2447,9 @@ async def send_differential_prepare(sid, data):
     """处理差异化准备消息 - 向不同节点发送不同的值"""
     session_id = data.get('sessionId')
     node_id = data.get('nodeId')
-    messages = data.get('messages')  # {target_node_id: value}
+    raw_messages = data.get('messages')  # {target_node_id: value}
+    # JSON对象的key总是字符串，需要转为整数key
+    messages = {int(k): v for k, v in raw_messages.items()} if raw_messages else {}
     
     session = get_session(session_id)
     if not session:
@@ -2441,7 +2499,12 @@ async def send_differential_prepare(sid, data):
             
             # 记录消息
             session["messages"]["prepare"].append(message)
-            
+
+            # 更新机器人目标节点的 received_prepare_count
+            if target_node in session.get("robot_node_states", {}):
+                if session["robot_node_states"][target_node].get("received_pre_prepare"):
+                    session["robot_node_states"][target_node]["received_prepare_count"] += 1
+
             # 获取目标节点的socket ID并发送
             target_sid = None
             if session_id in node_sockets and target_node in node_sockets[session_id]:
@@ -2467,7 +2530,9 @@ async def send_differential_commit(sid, data):
     """处理差异化提交消息 - 向不同节点发送不同的值"""
     session_id = data.get('sessionId')
     node_id = data.get('nodeId')
-    messages = data.get('messages')  # {target_node_id: value}
+    raw_messages = data.get('messages')  # {target_node_id: value}
+    # JSON对象的key总是字符串，需要转为整数key
+    messages = {int(k): v for k, v in raw_messages.items()} if raw_messages else {}
     
     session = get_session(session_id)
     if not session:
@@ -2517,7 +2582,11 @@ async def send_differential_commit(sid, data):
             
             # 记录消息
             session["messages"]["commit"].append(message)
-            
+
+            # 更新机器人目标节点的 received_commit_count
+            if target_node in session.get("robot_node_states", {}):
+                session["robot_node_states"][target_node]["received_commit_count"] += 1
+
             # 获取目标节点的socket ID并发送
             target_sid = None
             if session_id in node_sockets and target_node in node_sockets[session_id]:
@@ -2526,7 +2595,7 @@ async def send_differential_commit(sid, data):
                 print(f"✅ 差异化攻击：节点 {node_id} 向节点 {target_node} 发送值 {value} (可靠性: {reliability_info})")
             else:
                 print(f"⚠️  节点 {target_node} 未连接，差异化消息未发送")
-            
+
             # 广播消息到整个会话（用于动画和表格显示）
             if target_sid:
                 await sio.emit('message_received', message, room=session_id, skip_sid=target_sid)
@@ -2580,20 +2649,30 @@ async def send_commit(sid, data):
                 "byzantine": data.get("byzantine", False),
                 "delivered": True  # 标记消息已实际发送
             }
-            
+
             # 记录消息（只记录实际发送的消息）
             session["messages"]["commit"].append(message)
-            
-            # 获取目标节点的socket ID并发送
+
+            # 更新机器人目标节点的 received_commit_count
+            if target_node in session.get("robot_node_states", {}):
+                session["robot_node_states"][target_node]["received_commit_count"] += 1
+
+            # 发送给目标节点（如果在线）并广播到整个 session 供动画/统计显示
+            target_sid = None
             if session_id in node_sockets and target_node in node_sockets[session_id]:
                 target_sid = node_sockets[session_id][target_node]
                 await sio.emit('message_received', message, room=target_sid)
                 print(f"✅ 节点 {node_id} 的提交消息已发送给节点 {target_node} (可靠性: {reliability_info})")
             else:
-                print(f"⚠️  节点 {target_node} 未连接，消息未发送")
+                print(f"⚠️  节点 {target_node} 未连接，消息未发送给目标节点")
+            # 广播到整个 session（动画 & 消息表格）
+            if target_sid:
+                await sio.emit('message_received', message, room=session_id, skip_sid=target_sid)
+            else:
+                await sio.emit('message_received', message, room=session_id)
         else:
             print(f"❌ 节点 {node_id} 到节点 {target_node} 的提交消息被丢弃 (可靠性: {reliability_info})")
-    
+
     # 检查提交阶段是否完成
     await check_commit_phase(session_id)
     
@@ -2893,30 +2972,13 @@ async def check_prepare_phase(session_id: str):
     print(f"准备阶段检查 - 发送正确消息的节点: {correct_nodes}")
     print(f"准备阶段检查 - 主节点收到的正确prepare数量: {len(primary_correct_nodes)}, 需要数量: {primary_required}")
     
-    # 口径A：不允许“只看主节点prepare就直接判成功”
-    # 这里只负责推动进入commit阶段；最终是否成功由 check_commit_phase 按 Nc >= N-f 判定。
-    # 论文式(6)的单节点门限是“至少收到 2f 条来自其他节点的消息”，因此这里用 >= 2f（不是 >）。
+    # 严格5秒阶段模式：不提前推进，只记录状态，等待 handle_phase_timeout 驱动阶段转换
+    print(f"prepare stats - primary received: {len(primary_correct_nodes)}/{primary_required}, "
+          f"network correct nodes: {len(correct_nodes)}/{required_correct_messages}")
     if len(primary_correct_nodes) >= primary_required:
-        print(
-            f"主节点收到{len(primary_correct_nodes)}个正确prepare（需要≥{primary_required}个），进入提交阶段"
-        )
-        await start_commit_phase(session_id)
-        return
-    
-    # 检查是否收到足够多的正确消息（超过2f个即可）
-    # 注意：所有节点都是好节点，不会发错误信息
-    # 保留一个保底路径：当网络整体出现足够多prepare发送者时也推进commit（不直接判成功）
-    if len(correct_nodes) >= (required_correct_messages + 1):
-        print(
-            f"✅ 准备阶段推进（发送正确prepare的节点数={len(correct_nodes)}），进入提交阶段"
-        )
-        await start_commit_phase(session_id)
+        print(f"  primary has enough prepares, waiting for phase timer to advance to commit")
     else:
-        print(f"❌ 准备阶段未完成，还需要 {required_correct_messages - len(correct_nodes)} 个正确消息（当前{len(correct_nodes)}/{required_correct_messages}）")
-        # 如果接近完成，打印详细信息帮助调试
-        if len(correct_nodes) > 0:
-            print(f"   当前正确消息节点: {sorted(correct_nodes)}")
-            print(f"   当前轮次prepare消息总数: {len(prepare_messages)}")
+        print(f"  primary needs more prepares ({len(primary_correct_nodes)}/{primary_required}), waiting")
 
 async def start_commit_phase(session_id: str):
     """开始提交阶段"""
@@ -2928,121 +2990,50 @@ async def start_commit_phase(session_id: str):
     
     session["phase"] = "commit"
     session["phase_step"] = 2
-    
+
+    # 取消 prepare 阶段超时，启动 commit 阶段超时（10秒）
+    if session.get("phase_timeout_task"):
+        session["phase_timeout_task"].cancel()
+    current_round = session["current_round"]
+    session["phase_timeout_task"] = asyncio.create_task(
+        handle_phase_timeout(session_id, "commit", current_round)
+    )
+    print(f"Round {current_round} commit phase timeout started (5s)")
+
     # 通知所有节点进入提交阶段
     await sio.emit('phase_update', {
         "phase": "commit",
         "step": 2,
         "isMyTurn": True
     }, room=session_id)
-    
-    print(f"会话 {session_id} 进入提交阶段")
-    
+
+    print(f"Session {session_id} entered commit phase")
+
     # 通知所有机器人节点检查是否可以发送提交消息
     await check_robot_nodes_ready_for_commit(session_id)
 
 async def check_commit_phase(session_id: str):
-    """检查提交阶段是否完成"""
+    """记录提交阶段当前状态（严格10秒模式：不提前结束，等计时器驱动 _evaluate_commit_result）"""
     session = get_session(session_id)
     if not session:
         return
     if session.get("status") in {"completed", "stopped"}:
         return
-    
+
     config = session["config"]
-    current_round = session["current_round"]
-    
-    # 仅统计当前轮次的提交消息
-    commit_messages = [
-        msg for msg in session["messages"]["commit"]
-        if msg.get("round", current_round) == current_round
-    ]
-    
-    # 计算故障节点数 f = floor((n-1)/3)
-    # 注意：在实验模式下，所有节点都是好节点，不会发错误信息
     n = config["nodeCount"]
     f = (n - 1) // 3
-    primary_required = 2 * f  # 主节点需要收到2f个正确commit消息（加自己=2f+1）
-    
-    # 统计发送正确信息的不同节点（所有节点都是好节点，不会发错误信息）
-    correct_nodes = set()
-    primary_correct_nodes = set()
-    
-    def message_to_primary(msg: Dict[str, Any]) -> bool:
-        target = msg.get("to")
-        if target is None:
-            return True
-        if isinstance(target, str):
-            if target.lower() == "all":
-                return True
-            if target.isdigit():
-                target = int(target)
-            else:
-                return False
-        try:
-            return int(target) == 0
-        except (TypeError, ValueError):
-            return False
-
-    # 所有节点都是好节点，不会发错误信息，只统计正确消息
-    for msg in commit_messages:
-        if msg.get("value") == config["proposalValue"]:  # 正确信息
-            correct_nodes.add(msg["from"])
-            if msg.get("delivered", True) and message_to_primary(msg):
-                primary_correct_nodes.add(msg["from"])
-    
-    # ========== 共识判断（口径A：N_c ≥ N − f） ==========
-    # 对齐论文式(6)：commit 成功节点（commit节点）的定义是
-    # “从其他节点收到至少 2f 条成功 commit 消息”（不需要把自己那一条算进去）
     commit_msg_threshold = 2 * f
     success_threshold = n - f
-    
-    print(f"\n{'='*60}")
-    print(f"提交阶段检查（口径A：N_c ≥ N − f）")
-    print(f"{'='*60}")
-    print(f"总节点数: {n}, 容错数 f: {f}")
-    print(f"commit节点判定门限: {commit_msg_threshold} (2f, 来自其他节点)")
-    print(f"共识成功门限: {success_threshold} (N-f)")
-    print(f"发送正确commit的节点: {sorted(correct_nodes)} (共{len(correct_nodes)}个)")
-    
-    # 统计每个节点收到的commit数量
-    # 在广播模型下：如果节点 i 成功广播commit，所有其他节点都会收到
-    commit_nodes = []  # “commit节点”：收到≥2f条commit的节点
-    non_commit_nodes = []  # 未收到足够commit的节点
-    
-    for node_id in session["robot_nodes"]:
-        node_state = session["robot_node_states"][node_id]
-        # received_commit_count 本身就是“来自其他节点的commit数”
-        received_count = node_state["received_commit_count"]
-        
-        if received_count >= commit_msg_threshold:
-            commit_nodes.append(node_id)
-            print(f"  ✅ 节点 {node_id}: 收到 {received_count} 条commit (≥{commit_msg_threshold}) [commit节点]")
-        else:
-            non_commit_nodes.append(node_id)
-            print(f"  ⏳ 节点 {node_id}: 收到 {received_count} 条commit (<{commit_msg_threshold})")
-    
-    # 判断：commit节点数量 N_c ≥ N − f
-    print(f"\ncommit节点数量: {len(commit_nodes)}/{n}")
-    print(f"commit节点: {sorted(commit_nodes)}")
-    
-    if len(commit_nodes) >= success_threshold:
-        print(f"\n✅✅✅ 共识成功！")
-        print(f"   {len(commit_nodes)} 个commit节点 ≥ {success_threshold} (N-f)")
-        print(f"   这些节点已达成共识，系统整体共识成功")
-        print(f"{'='*60}\n")
-        await finalize_consensus(
-            session_id,
-            "共识成功",
-            f"{len(commit_nodes)}个commit节点达成共识(≥{success_threshold})"
-        )
-        return
-    else:
-        print(f"\n⏳ 共识进行中：{len(commit_nodes)}/{success_threshold} 个commit节点")
-        print(f"   还需要 {success_threshold - len(commit_nodes)} 个节点达成共识")
-        print(f"{'='*60}\n")
 
-async def finalize_consensus(session_id: str, status: str = "共识完成", description: str = "共识已完成"):
+    commit_nodes = [
+        node_id for node_id in session["robot_nodes"]
+        if session["robot_node_states"][node_id]["received_commit_count"] >= commit_msg_threshold
+    ]
+    print(f"commit phase status: {len(commit_nodes)}/{success_threshold} commit nodes "
+          f"(threshold 2f={commit_msg_threshold}), waiting for 10s timer")
+
+async def finalize_consensus(session_id: str, status: str = "Consensus Complete", description: str = "Consensus completed"):
     """完成共识"""
     session = get_session(session_id)
     if not session:
@@ -3057,10 +3048,15 @@ async def finalize_consensus(session_id: str, status: str = "共识完成", desc
     session["consensus_finalized_round"] = current_round
     print(f"第{current_round}轮共识完成处理开始")
     
-    # 取消超时任务
+    # 取消全局超时任务和阶段超时任务
     if session.get("timeout_task"):
         session["timeout_task"].cancel()
-        print(f"第{session['current_round']}轮共识已完成，取消超时任务")
+        session["timeout_task"] = None
+        print(f"Round {session['current_round']} completed, cancelled global timeout")
+    if session.get("phase_timeout_task"):
+        session["phase_timeout_task"].cancel()
+        session["phase_timeout_task"] = None
+        print(f"Round {session['current_round']} completed, cancelled phase timeout")
     
     session["phase"] = "completed"
     session["phase_step"] = 3
@@ -3111,26 +3107,106 @@ async def finalize_consensus(session_id: str, status: str = "共识完成", desc
         print("实验模式：不自动启动下一轮，等待reset-round触发")
 
 async def handle_consensus_timeout(session_id: str, round_number: int):
-    """处理共识超时"""
-    await asyncio.sleep(2)  # 等待2秒（进一步加速）
-    
+    """处理共识超时（全局15秒上限）"""
+    await asyncio.sleep(15)
+
     session = get_session(session_id)
     if not session:
         return
-    
+
     # 检查是否仍然在同一轮次且未完成共识
     if session["current_round"] == round_number and session["status"] == "running":
-        print(f"第{round_number}轮共识超时（2秒未完成），判定为共识失败（加速模式）")
-        
-        # 清除超时任务引用，避免在finalize_consensus中尝试取消正在执行的任务
+        print(f"Round {round_number} consensus global timeout (15s), marking as failed")
+
+        # 取消阶段超时任务
+        if session.get("phase_timeout_task"):
+            session["phase_timeout_task"].cancel()
+            session["phase_timeout_task"] = None
+
+        # 清除超时任务引用
         session["timeout_task"] = None
-        
-        # 设置共识结果为超时失败
-        await finalize_consensus(session_id, "共识超时失败", "2秒内未达成共识（加速模式）")
+
+        await finalize_consensus(session_id, "Consensus Timeout", "Failed to reach consensus within 15 seconds")
+
+
+async def handle_phase_timeout(session_id: str, phase: str, round_number: int):
+    """处理阶段超时（每阶段严格10秒），时间到后推进到下一阶段"""
+    await asyncio.sleep(5)
+
+    session = get_session(session_id)
+    if not session:
+        return
+
+    if (session["current_round"] != round_number
+            or session["phase"] != phase
+            or session["status"] != "running"):
+        return
+
+    print(f"Round {round_number} phase '{phase}' 5s timer ended, advancing")
+    session["phase_timeout_task"] = None
+
+    if phase == "pre-prepare":
+        # 进入 prepare 阶段
+        session["phase"] = "prepare"
+        session["phase_step"] = 1
+        await sio.emit('phase_update', {
+            "phase": "prepare",
+            "step": 1,
+            "isMyTurn": True
+        }, room=session_id)
+        print(f"Round {round_number} transitioning to prepare phase")
+        session["phase_timeout_task"] = asyncio.create_task(
+            handle_phase_timeout(session_id, "prepare", round_number)
+        )
+        # 机器人节点发送 prepare 消息（2秒后）
+        asyncio.create_task(robot_send_prepare_messages(session_id))
+
+    elif phase == "prepare":
+        # 进入 commit 阶段（无论是否收到足够消息）
+        await start_commit_phase(session_id)
+
+    elif phase == "commit":
+        # 评估共识结果并结束本轮（基于 commit 计数，不用超时判断）
+        await _evaluate_commit_result(session_id)
+
+
+async def _evaluate_commit_result(session_id: str):
+    """commit阶段计时结束，根据收到的commit消息评估共识结果"""
+    session = get_session(session_id)
+    if not session:
+        return
+
+    config = session["config"]
+    current_round = session["current_round"]
+    n = config["nodeCount"]
+    f = (n - 1) // 3
+    commit_msg_threshold = 2 * f
+    success_threshold = n - f
+
+    commit_nodes = []
+    for node_id in session["robot_nodes"]:
+        node_state = session["robot_node_states"][node_id]
+        if node_state["received_commit_count"] >= commit_msg_threshold:
+            commit_nodes.append(node_id)
+
+    print(f"Round {current_round} commit phase ended: {len(commit_nodes)}/{success_threshold} commit nodes")
+
+    if len(commit_nodes) >= success_threshold:
+        await finalize_consensus(
+            session_id,
+            "Consensus Succeeded",
+            f"{len(commit_nodes)} commit nodes reached consensus (≥{success_threshold})"
+        )
+    else:
+        await finalize_consensus(
+            session_id,
+            "Consensus Failed",
+            f"Insufficient commit nodes: {len(commit_nodes)}/{success_threshold}"
+        )
 
 async def start_next_round(session_id: str):
     """启动下一轮共识"""
-    await asyncio.sleep(10)
+    await asyncio.sleep(5)
     
     session = get_session(session_id)
     if not session:
@@ -3335,16 +3411,15 @@ async def robot_send_pre_prepare(session_id: str):
     session["robot_node_states"][proposer_id]["received_pre_prepare"] = True
     print(f"Primary node {proposer_id} sending pre-prepare message")
     
-    # 多跳路由模型：对每个副本节点通过最短路径发送
+    # 向所有节点（机器人 + 人类）发送 pre-prepare
+    all_targets = session["robot_nodes"] + session["human_nodes"]
     successful_count = 0
-    for target_node_id in session["robot_nodes"]:
+    for target_node_id in all_targets:
         if target_node_id == proposer_id:
             continue  # 不发送给自己
-        
-        # 通过最短路径发送（可靠性检查在should_deliver_message中处理）
+
         link_success = should_deliver_message(session_id, proposer_id, target_node_id)
-        
-        # 创建消息记录
+
         message = {
             "from": proposer_id,
             "to": target_node_id,
@@ -3357,51 +3432,44 @@ async def robot_send_pre_prepare(session_id: str):
             "isRobot": True,
             "delivered": link_success
         }
-        
-        # 记录消息
+
         session["messages"]["pre_prepare"].append(message)
-        
+
         if link_success:
-            # 向目标节点发送消息
             if session_id in node_sockets and target_node_id in node_sockets[session_id]:
                 target_sid = node_sockets[session_id][target_node_id]
                 await sio.emit('message_received', message, room=target_sid)
-            
-            # 标记该节点收到了 pre-prepare
-            session["robot_node_states"][target_node_id]["received_pre_prepare"] = True
+            # 只有机器人节点才有 robot_node_states
+            if target_node_id in session["robot_node_states"]:
+                session["robot_node_states"][target_node_id]["received_pre_prepare"] = True
             successful_count += 1
             print(f"  ✅ 主节点 → 节点{target_node_id}: pre-prepare送达")
         else:
             print(f"  ❌ 主节点 → 节点{target_node_id}: pre-prepare丢失")
-    
-    print(f"📊 Pre-prepare阶段完成: {successful_count}/{len(session['robot_nodes'])-1} 条链路成功")
 
-    # 实验模式（全机器人）使用“同步阶段推进”，避免prepare/commit乱序导致的误判（对齐Theorem 1）
+    print(f"📊 Pre-prepare阶段完成: {successful_count}/{len(all_targets)-1} 条链路成功")
+
+    # 实验模式（全机器人）使用"同步阶段推进"，避免prepare/commit乱序导致的误判（对齐Theorem 1）
     is_experiment_mode = config["robotNodes"] == config["nodeCount"]
     if is_experiment_mode:
         await run_experiment_round_sync(session_id)
         return
 
-    # 正常模式：进入准备阶段（异步）
-    session["phase"] = "prepare"
-    session["phase_step"] = 1
+    # 正常模式：保持 pre-prepare 阶段，10秒计时器结束后自动进入 prepare
+    # (phase 已在 start_pbft_process / start_next_round 中设为 "pre-prepare")
 
-    await sio.emit('phase_update', {
-        "phase": "prepare",
-        "step": 1,
-        "isMyTurn": True
-    }, room=session_id)
+    print(f"会话 {session_id} pre-prepare 完成，等待5秒计时器后进入 prepare 阶段")
 
-    print(f"会话 {session_id} 进入准备阶段")
-
-    # 启动超时任务（2秒后检查）
+    # 正常模式：三个阶段各5秒共15秒，由阶段计时器驱动，不需要额外的全局超时
     current_round = session["current_round"]
-    timeout_task = asyncio.create_task(handle_consensus_timeout(session_id, current_round))
-    session["timeout_task"] = timeout_task
-    print(f"第{current_round}轮共识超时检查已启动（2秒）")
 
-    # 机器人节点自动发送准备消息
-    asyncio.create_task(robot_send_prepare_messages(session_id))
+    # 启动 pre-prepare 阶段超时任务（10秒），时间到后自动进入 prepare
+    if session.get("phase_timeout_task"):
+        session["phase_timeout_task"].cancel()
+    session["phase_timeout_task"] = asyncio.create_task(
+        handle_phase_timeout(session_id, "pre-prepare", current_round)
+    )
+    print(f"Round {current_round} pre-prepare phase timeout started (5s)")
 
 
 async def run_experiment_round_sync(session_id: str):
@@ -3436,8 +3504,8 @@ async def run_experiment_round_sync(session_id: str):
     if len(V_pp) < success_threshold:
         await finalize_consensus(
             session_id,
-            "共识失败",
-            f"Pre-prepare失败：Npp={len(V_pp)} < N-f={success_threshold}"
+            "Consensus Failed",
+            f"Pre-prepare failed: Npp={len(V_pp)} < N-f={success_threshold}"
         )
         return
 
@@ -3495,8 +3563,8 @@ async def run_experiment_round_sync(session_id: str):
     if len(V_p) < success_threshold:
         await finalize_consensus(
             session_id,
-            "共识失败",
-            f"Prepare失败：Np={len(V_p)} < N-f={success_threshold}"
+            "Consensus Failed",
+            f"Prepare failed: Np={len(V_p)} < N-f={success_threshold}"
         )
         return
 
@@ -3550,13 +3618,13 @@ async def run_experiment_round_sync(session_id: str):
     if len(V_c) >= success_threshold:
         await finalize_consensus(
             session_id,
-            "共识成功",
+            "Consensus Succeeded",
             f"Nc={len(V_c)} ≥ N-f={success_threshold}"
         )
     else:
         await finalize_consensus(
             session_id,
-            "共识失败",
+            "Consensus Failed",
             f"Nc={len(V_c)} < N-f={success_threshold}"
         )
 
@@ -3577,11 +3645,11 @@ async def robot_send_prepare_messages(session_id: str):
     
     if is_experiment_mode:
         # 实验模式：立即发送，不等待延迟
-        print(f"机器人节点立即发送准备消息（实验模式）")
+        print(f"Robot nodes sending prepare immediately (experiment mode)")
     else:
-        # 正常模式：延迟10秒发送
-        print(f"机器人节点将在10秒后发送准备消息（正常模式）")
-        await asyncio.sleep(10)
+        # 正常模式：满足条件后2秒发送
+        print(f"Robot nodes sending prepare in 2 seconds (normal mode)")
+        await asyncio.sleep(2)
         
         # 重新获取session，检查状态是否改变
         session = get_session(session_id)
@@ -3643,16 +3711,15 @@ async def handle_robot_prepare(session_id: str, robot_id: int, value: int):
     
     config = session["config"]
     
-    # 多跳路由模型：对每个目标节点通过最短路径发送
+    # 向所有节点（机器人 + 人类）发送 prepare
+    all_targets = session["robot_nodes"] + session["human_nodes"]
     successful_count = 0
-    for target_node_id in session["robot_nodes"]:
+    for target_node_id in all_targets:
         if target_node_id == robot_id:
             continue  # 不发送给自己
-        
-        # 通过最短路径发送（可靠性检查在should_deliver_message中处理）
+
         link_success = should_deliver_message(session_id, robot_id, target_node_id)
-        
-        # 创建消息记录
+
         message = {
             "from": robot_id,
             "to": target_node_id,
@@ -3665,31 +3732,26 @@ async def handle_robot_prepare(session_id: str, robot_id: int, value: int):
             "isRobot": True,
             "delivered": link_success
         }
-        
-        # 记录消息
+
         session["messages"]["prepare"].append(message)
-        
+
         if link_success:
-            # 向目标节点发送消息
             if session_id in node_sockets and target_node_id in node_sockets[session_id]:
                 target_sid = node_sockets[session_id][target_node_id]
                 await sio.emit('message_received', message, room=target_sid)
-            
-            # 关键修复：只有目标节点收到了pre-prepare，才会接收和计数prepare消息
-            # 这符合PBFT协议：节点只有在收到pre-prepare后才会处理prepare消息
-            if session["robot_node_states"][target_node_id]["received_pre_prepare"]:
-                session["robot_node_states"][target_node_id]["received_prepare_count"] += 1
-                successful_count += 1
-            else:
-                print(f"    ⏭️  目标节点{target_node_id}未收到pre-prepare，不计数此prepare")
-    
-    print(f"  节点{robot_id}→其他节点: prepare {successful_count}/{len(session['robot_nodes'])-1}条成功")
+            # 只有机器人节点才更新计数
+            if target_node_id in session["robot_node_states"]:
+                if session["robot_node_states"][target_node_id]["received_pre_prepare"]:
+                    session["robot_node_states"][target_node_id]["received_prepare_count"] += 1
+                    successful_count += 1
+                else:
+                    print(f"    ⏭️  目标节点{target_node_id}未收到pre-prepare，不计数此prepare")
+
+    print(f"  节点{robot_id}→其他节点: prepare {successful_count}/{len(all_targets)-1}条成功")
     
     # 检查准备阶段是否完成（每次添加消息后检查）
     await check_prepare_phase(session_id)
-    
-    # 检查是否有机器人节点需要进入提交阶段
-    await check_robot_nodes_ready_for_commit(session_id)
+    # 机器人的commit发送由 start_commit_phase -> check_robot_nodes_ready_for_commit 统一触发
 
 async def check_robot_nodes_ready_for_commit(session_id: str):
     """检查机器人节点是否准备好发送提交消息
@@ -3708,18 +3770,19 @@ async def check_robot_nodes_ready_for_commit(session_id: str):
     config = session["config"]
     n = config["nodeCount"]
     f = (n - 1) // 3
-    # 论文式(6)：单节点进入 V_p 的门限是“至少收到 2f 条来自其他节点的 prepare”
+    # 论文标准：进入commit阶段需要收到2f条prepare消息（包括自己）
+    # 即从其他节点收到 2f-1 条 prepare
     required_prepare = 2 * f - 1  # 从其他节点收到2f-1条（加自己=2f）
     
     # 判断是否为实验模式：所有节点都是机器人
     is_experiment_mode = config["robotNodes"] == config["nodeCount"]
     
     # 检查每个机器人节点是否收到足够的准备消息（包括主节点node 0）
-    print(f"检查机器人节点是否准备好发送commit - 需要≥{required_prepare+1}个prepare消息（包括自己）")
+    print(f"检查机器人节点是否准备好发送commit - 需要从其他节点收到≥{required_prepare}个prepare消息（加自己=2f={2*f}）")
     for robot_id in session["robot_nodes"]:
         robot_state = session["robot_node_states"][robot_id]
         
-        # 按论文门限，这里只看“来自其他节点”的 prepare 数量（received_prepare_count 本身就是这个口径）
+        # 按论文门限，这里只看"来自其他节点"的 prepare 数量（received_prepare_count 本身就是这个口径）
         total_prepare_count = robot_state["received_prepare_count"]
 
         # 打印每个节点的状态
@@ -3738,7 +3801,7 @@ async def check_robot_nodes_ready_for_commit(session_id: str):
                 # 实验模式：立即发送，不使用异步延迟
                 await handle_robot_commit(session_id, robot_id, config["proposalValue"])
             else:
-                print(f"✅ 机器人节点 {robot_id} prepare达标（{total_prepare_count}≥{required_prepare}），将在10秒后发送commit（正常模式）")
+                print(f"✅ Robot node {robot_id} prepare threshold met ({total_prepare_count}≥{required_prepare}), sending commit in 2 seconds (normal mode)")
                 # 正常模式：延迟10秒发送
                 asyncio.create_task(schedule_robot_commit_with_delay(session_id, robot_id, config["proposalValue"]))
             robot_state["sent_commit"] = True
@@ -3746,15 +3809,15 @@ async def check_robot_nodes_ready_for_commit(session_id: str):
             print(f"⏳ 机器人节点 {robot_id} prepare未达标（{total_prepare_count}<{required_prepare}），等待中...")
 
 async def schedule_robot_commit_with_delay(session_id: str, robot_id: int, value: int):
-    """调度机器人节点发送提交消息（正常模式：延迟10秒）"""
+    """调度机器人节点发送提交消息（正常模式：满足条件后2秒）"""
     session = get_session(session_id)
     if not session:
         return
     if session.get("status") in {"completed", "stopped"}:
         return
-    
+
     current_round = session["current_round"]
-    await asyncio.sleep(10)  # 正常模式：延迟10秒
+    await asyncio.sleep(2)  # 正常模式：满足条件后2秒
     
     session = get_session(session_id)
     if not session:
@@ -3809,16 +3872,15 @@ async def handle_robot_commit(session_id: str, robot_id: int, value: int):
     n = config["nodeCount"]
     f = (n - 1) // 3
     
-    # 多跳路由模型：对每个目标节点通过最短路径发送
+    # 向所有节点（机器人 + 人类）发送 commit
+    all_targets = session["robot_nodes"] + session["human_nodes"]
     successful_count = 0
-    for target_node_id in session["robot_nodes"]:
+    for target_node_id in all_targets:
         if target_node_id == robot_id:
             continue  # 不发送给自己
-        
-        # 通过最短路径发送（可靠性检查在should_deliver_message中处理）
+
         link_success = should_deliver_message(session_id, robot_id, target_node_id)
-        
-        # 创建消息记录
+
         message = {
             "from": robot_id,
             "to": target_node_id,
@@ -3831,37 +3893,35 @@ async def handle_robot_commit(session_id: str, robot_id: int, value: int):
             "isRobot": True,
             "delivered": link_success
         }
-        
-        # 记录消息
+
         session["messages"]["commit"].append(message)
-        
+
         if link_success:
-            # 向目标节点发送消息
             if session_id in node_sockets and target_node_id in node_sockets[session_id]:
                 target_sid = node_sockets[session_id][target_node_id]
                 await sio.emit('message_received', message, room=target_sid)
-            
-            # 关键修复：只有目标节点收到了足够的prepare（即在V_p中），才会接收和计数commit消息
-            # 这符合PBFT协议：节点只有在prepare阶段达标后才会处理commit消息
-            # 标准PBFT阈值：需要>2f条prepare（即≥2f+1条）
-            required_prepare = 2 * f - 1  # 从其他节点收到2f-1条（加自己=2f）
-            # 论文式(6)：目标节点只有在 prepare 阶段“来自其他节点的prepare数 ≥ 2f”时，才接收并计数 commit
-            target_state = session["robot_node_states"][target_node_id]
-            total_prepare_count = target_state["received_prepare_count"]
-
-            if total_prepare_count >= required_prepare:
+            # 统一计数所有收到的commit消息，不区分来源
+            if target_node_id in session["robot_node_states"]:
                 session["robot_node_states"][target_node_id]["received_commit_count"] += 1
                 successful_count += 1
-            else:
-                print(
-                    f"    ⏭️  目标节点{target_node_id}prepare未达标（{total_prepare_count}<{required_prepare}），不计数此commit"
-                )
-    
-    print(f"  节点{robot_id}→其他节点: commit {successful_count}/{len(session['robot_nodes'])-1}条成功")
+
+    print(f"  节点{robot_id}→其他节点: commit {successful_count}/{len(all_targets)-1}条成功")
     
     # 检查提交阶段是否完成
     await check_commit_phase(session_id)
 
+# 静态文件托管（生产部署用，需先 npm run build）
+_dist_dir = os.path.join(os.path.dirname(__file__), "..", "dist")
+if os.path.isdir(_dist_dir):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_dist_dir, "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        file_path = os.path.join(_dist_dir, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(_dist_dir, "index.html"))
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(socket_app, host="127.0.0.1", port=8000) 
+    uvicorn.run(socket_app, host="0.0.0.0", port=8000) 

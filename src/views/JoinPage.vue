@@ -15,20 +15,37 @@
           </template>
           
           <div v-if="sessionInfo" class="session-details">
-            <el-descriptions :column="2" border>
-              <el-descriptions-item label="会话ID">{{ sessionInfo.sessionId }}</el-descriptions-item>
-              <el-descriptions-item label="Total Nodes">{{ sessionInfo.nodeCount }}</el-descriptions-item>
-              <el-descriptions-item label="Faulty Nodes">{{ sessionInfo.faultyNodes }}</el-descriptions-item>
-              <el-descriptions-item label="Topology">{{ getTopologyName(sessionInfo.topology) }}</el-descriptions-item>
-              <el-descriptions-item label="Proposal Value">{{ sessionInfo.proposalValue }}</el-descriptions-item>
-              <el-descriptions-item label="状态">{{ sessionInfo.status }}</el-descriptions-item>
-            </el-descriptions>
-            
+            <!-- Join button at the very top -->
+            <div class="join-actions flex flex-col gap-3" style="margin-bottom: 16px;">
+              <button
+                @click="autoAssignAndJoin"
+                :disabled="joining || sessionInfo.nodeCount === connectedNodes.length"
+                class="w-full bg-blue-100 dark:bg-blue-900 border-l-4 border-blue-500 dark:border-blue-700 text-blue-900 dark:text-blue-100 p-4 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-blue-200 dark:hover:bg-blue-800 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+              >
+                <svg
+                  v-if="!joining"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  class="h-6 w-6 flex-shrink-0 mr-2 text-blue-600"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
+                    stroke-width="2"
+                    stroke-linejoin="round"
+                    stroke-linecap="round"
+                  ></path>
+                </svg>
+                <span class="text-base font-semibold">
+                  {{ joining ? 'Joining...' : (sessionInfo.nodeCount === connectedNodes.length ? 'All Nodes Occupied' : 'Auto-Assign and Join') }}
+                </span>
+              </button>
+            </div>
+
+            <!-- Stats and node status -->
             <div class="auto-assign-section">
               <div class="assign-info">
-                <h3>Auto Node Assignment</h3>
-                <p>System will automatically assign an available node for you, no manual selection needed.</p>
-                
                 <div class="session-stats">
                   <el-row :gutter="20">
                     <el-col :span="12">
@@ -40,12 +57,12 @@
                     <el-col :span="12">
                       <div class="stat-item">
                         <div class="stat-number">{{ connectedNodes.length }}</div>
-                        <div class="stat-label">已连接节点</div>
+                        <div class="stat-label">Connected</div>
                       </div>
                     </el-col>
                   </el-row>
                 </div>
-                
+
                 <div class="available-nodes">
                   <h4>Node Status</h4>
                   <div class="nodes-grid">
@@ -74,58 +91,17 @@
                 </div>
               </div>
               
-              <div class="join-actions flex flex-col gap-3">
-                <!-- 自动分配并加入按钮 -->
-                <button
-                  @click="autoAssignAndJoin"
-                  :disabled="joining || sessionInfo.nodeCount === connectedNodes.length"
-                  class="w-full bg-blue-100 dark:bg-blue-900 border-l-4 border-blue-500 dark:border-blue-700 text-blue-900 dark:text-blue-100 p-4 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-blue-200 dark:hover:bg-blue-800 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                >
-                  <svg
-                    v-if="!joining"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    class="h-6 w-6 flex-shrink-0 mr-2 text-blue-600"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-                      stroke-width="2"
-                      stroke-linejoin="round"
-                      stroke-linecap="round"
-                    ></path>
-                  </svg>
-                  <span class="text-base font-semibold">
-                    {{ joining ? 'Joining...' : (sessionInfo.nodeCount === connectedNodes.length ? 'All Nodes Occupied' : 'Auto-Assign and Join') }}
-                  </span>
-                </button>
-                
-                <!-- 返回按钮 -->
-                <button
-                  @click="goBack"
-                  class="w-full bg-gray-100 dark:bg-gray-700 border-l-4 border-gray-500 dark:border-gray-600 text-gray-900 dark:text-gray-100 p-4 rounded-lg flex items-center justify-center transition duration-300 ease-in-out hover:bg-gray-200 dark:hover:bg-gray-600 transform hover:scale-105"
-                >
-                  <svg
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    class="h-6 w-6 flex-shrink-0 mr-2 text-gray-600"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      d="M10 19l-7-7m0 0l7-7m-7 7h18"
-                      stroke-width="2"
-                      stroke-linejoin="round"
-                      stroke-linecap="round"
-                    ></path>
-                  </svg>
-                  <span class="text-base font-semibold">Back</span>
-                </button>
-              </div>
             </div>
+
+            <!-- Session details at the bottom -->
+            <el-descriptions :column="2" border size="small" style="margin-top: 16px;">
+              <el-descriptions-item label="Topology">{{ getTopologyName(sessionInfo.topology) }}</el-descriptions-item>
+              <el-descriptions-item label="Faulty Nodes">{{ sessionInfo.faultyNodes }}</el-descriptions-item>
+              <el-descriptions-item label="Proposal Value">{{ sessionInfo.proposalValue }}</el-descriptions-item>
+              <el-descriptions-item label="Status">{{ sessionInfo.status }}</el-descriptions-item>
+            </el-descriptions>
           </div>
-          
+
           <div v-else class="loading-section">
             <el-skeleton :rows="6" animated />
           </div>
@@ -219,8 +195,9 @@ export default {
         // Get connected nodes
         await loadConnectedNodes()
       } catch (error) {
-        ElMessage.error('Failed to load session info')
-        router.push('/')
+        console.error('Failed to load session info:', error?.response?.status, error?.message)
+        ElMessage.error(`Failed to load session: ${error?.response?.status || error?.message}`)
+        // 不再自动跳回首页，让用户看到错误
       }
     }
     
